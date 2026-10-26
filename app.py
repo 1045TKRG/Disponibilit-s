@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🚨 SOS Remplacement - Vue Globale des Disponibilités (Par Date)")
+st.title("🚨 SOS Remplacement - Vue Globale des Disponibilités (Sécurisé)")
 st.markdown("---")
 
 # ---------------------------------------------------------
@@ -57,7 +57,7 @@ if erreur:
     st.stop()
 
 # ---------------------------------------------------------
-# 2. ANALYSE FINES DES PLANNINGS PDF (Absences & Jours)
+# 2. ANALYSE FINES DES PLANNINGS PDF (Ligne par Ligne)
 # ---------------------------------------------------------
 MOTIFS_ABSENCE = [
     r'\bCP\b', r'\bCONG[EÉ]S?\b', 
@@ -71,15 +71,15 @@ MOTIFS_ABSENCE = [
     r'\bMISE \u00c0 PIED\b', r'\bMISE A PIED\b'
 ]
 
-suivi_agents = {}
+# Dictionnaire global des plannings par agent : { "NOM_AGENT": { "JJ/MM/YYYY": "REPOS" / "TRAVAIL" / "ABSENT" } }
+planning_agents = {}
 agent_types_contrat = {}
 
-# Fonction utilitaire pour faire correspondre les noms (ex: "BUARD PERLE" avec "PERLE BUARD")
 def noms_sont_compatibles(excel_name, pdf_name):
     e_words = set(excel_name.upper().split())
     p_words = set(pdf_name.upper().split())
-    # Si tous les mots de l'un sont dans l'autre ou intersection solide
-    return e_words.issubset(p_words) or p_words.issubset(e_words) or len(e_words.intersection(p_words)) >= 2
+    # Si les mots principaux se croisent (ex: BUARD et PERLE)
+    return len(e_words.intersection(p_words)) >= min(len(e_words), len(p_words))
 
 if fichiers_planning:
     for fichier in fichiers_planning:
@@ -89,98 +89,83 @@ if fichiers_planning:
                 text = page.extract_text()
                 if not text:
                     continue
+                
+                lines = text.split('\n')
                 text_upper = text.upper()
                 
-                match_agent = re.search(r'Planning\s+(.*?)\s+par SITES', text, re.IGNORECASE)
-                if not match_agent:
-                    match_agent = re.search(r'Agent\s*:\s*(.*?)(?=\s+du|\s+site|\n)', text, re.IGNORECASE)
+                # Recherche du nom de l'agent sur la page
+                agent_name_pdf = None
+                for line in lines:
+                    line_up = line.upper()
+                    if "PLANNING" in line_up and "SITES" in line_up:
+                        match = re.search(r'PLANNING\s+(.*?)\s+PAR SITES', line_up)
+                        if match:
+                            agent_name_pdf = match.group(1).strip()
+                            break
+                    elif "AGENT" in line_up:
+                        match = re.search(r'AGENT\s*:\s*(.*?)(?=\s+DU|\s+SITE|\n|$)', line_up)
+                        if match:
+                            agent_name_pdf = match.group(1).strip()
+                            break
                 
-                if not match_agent:
+                # Fallback : Si aucun en-tête standard, on regarde si un agent du référentiel est mentionné sur la page
+                if not agent_name_pdf:
+                    for ex_agent in df_agents["Agent"].unique():
+                        if ex_agent.upper() in text_upper:
+                            agent_name_pdf = ex_agent.upper()
+                            break
+                
+                if not agent_name_pdf:
                     continue
                 
-                agent_name = match_agent.group(1).strip().upper()
-                
-                if agent_name not in suivi_agents:
-                    suivi_agents[agent_name] = {
-                        "dates_absentes": set(),
-                        "dates_travail": set(),
-                        "toutes_dates": set()
-                    }
+                if agent_name_pdf not in planning_agents:
+                    planning_agents[agent_name_pdf] = {}
                 
                 # Détection type de contrat
                 if "TEMPS PLEIN" in text_upper:
-                    agent_types_contrat[agent_name] = "Temps plein"
+                    agent_types_contrat[agent_name_pdf] = "Temps plein"
                 elif "TEMPS PARTIEL" in text_upper:
-                    agent_types_contrat[agent_name] = "Temps partiel"
+                    agent_types_contrat[agent_name_pdf] = "Temps partiel"
                 elif "LISSÉ" in text_upper or "LISSE" in text_upper:
-                    agent_types_contrat[agent_name] = "Lissé"
+                    agent_types_contrat[agent_name_pdf] = "Lissé"
                 else:
-                    agent_types_contrat[agent_name] = agent_types_contrat.get(agent_name, "Temps plein")
+                    agent_types_contrat[agent_name_pdf] = agent_types_contrat.get(agent_name_pdf, "Temps plein")
 
-                # Extraction de la période du planning
-                period_match = re.search(r'DU\s+([0-9]{2}/[0-9]{2}/[0-9]{4})\s+AU\s+([0-9]{2}/[0-9]{2}/[0-9]{4})', text_upper)
-                valid_dates = []
-                if period_match:
-                    try:
-                        start_dt = pd.to_datetime(period_match.group(1), format='%d/%m/%Y')
-                        end_dt = pd.to_datetime(period_match.group(2), format='%d/%m/%Y')
-                        date_range = pd.date_range(start=start_dt, end=end_dt)
-                        valid_dates = [d.strftime('%d/%m/%Y') for d in date_range]
-                    except Exception:
-                        pass
-
-                if not valid_dates:
-                    continue
-
-                suivi_agents[agent_name]["toutes_dates"].update(valid_dates)
-
-                # Vérification des motifs d'absence (CP, Maladie, etc.)
-                est_absent_global = False
-                for motif in MOTIFS_ABSENCE:
-                    if re.search(motif, text_upper):
-                        est_absent_global = True
-                        break
-
-                if est_absent_global:
-                    suivi_agents[agent_name]["dates_absentes"].update(valid_dates)
-                    continue
-
-                # Analyse jour par jour des horaires et des repos
-                has_repos_word = "REPOS" in text_upper
-                
-                for d in valid_dates:
-                    short_date = d[:5] # ex: "27/10"
-                    parts = text_upper.split(short_date)
-                    is_working = False
+                # Analyse ligne par ligne pour associer chaque date à son statut réel
+                current_date = None
+                for line in lines:
+                    line_up = line.upper()
                     
-                    if len(parts) > 1:
-                        snippet = parts[1][:120]
-                        found_times = re.findall(r'([0-2]?[0-9][:H][0-5][0-9])', snippet)
-                        if found_times:
-                            is_working = True
-                    
-                    if not is_working and has_repos_word:
-                        # C'est un jour de repos explicite
-                        pass
-                    elif not is_working and not has_repos_word:
-                        # Vérification globale de la page
-                        all_hours = re.findall(r'([0-2]?[0-9][:H][0-5][0-9])', text_upper)
-                        if not all_hours:
-                            is_working = False
+                    # Détection d'une date (format DD/MM/YYYY ou DD/MM)
+                    date_match = re.search(r'\b([0-9]{2}/[0-9]{2}(?:/[0-9]{4})?)\b', line)
+                    if date_match:
+                        d_raw = date_match.group(1)
+                        if len(d_raw) == 5:
+                            # Ajout de l'année par défaut si absente
+                            current_date = f"{d_raw}/2026"
                         else:
-                            # S'il y a des heures sur la page mais pas sur ce bout, vérifier s'il bosse
-                            pass
-
-                    if is_working:
-                        suivi_agents[agent_name]["dates_travail"].add(d)
+                            current_date = d_raw
+                    
+                    if current_date:
+                        # Vérification des motifs d'absence sur la ligne ou la page
+                        is_absent = any(re.search(motif, line_up) for motif in MOTIFS_ABSENCE)
+                        has_repos = "REPOS" in line_up
+                        has_hours = bool(re.search(r'([0-2]?[0-9][:H][0-5][0-9])', line_up))
+                        
+                        if is_absent:
+                            planning_agents[agent_name_pdf][current_date] = "ABSENT"
+                        elif has_hours and not has_repos:
+                            planning_agents[agent_name_pdf][current_date] = "TRAVAIL"
+                        elif has_repos:
+                            planning_agents[agent_name_pdf][current_date] = "REPOS"
 
         except Exception as e:
             pass
 
 # ---------------------------------------------------------
-# 3. GÉNÉRATION DU TABLEAU GLOBAL (UNE LIGNE PAR DATE DISPONIBLE)
+# 3. GÉNÉRATION DU TABLEAU GLOBAL DES DISPONIBILITÉS RÉELLES
 # ---------------------------------------------------------
-st.subheader("📋 Liste des Disponibilités (Une ligne par date)")
+st.subheader("📋 Liste des Disponibilités Réelles (Vérifiées par agent)")
 
 if not df_agents.empty:
     tous_agents = df_agents[["Site", "Agent"]].drop_duplicates().to_dict(orient="records")
@@ -191,41 +176,35 @@ if not df_agents.empty:
         site = item["Site"]
         agent_nom = item["Agent"]
         
-        # Trouver les clés PDF correspondantes pour cet agent
-        matched_keys = [k for k in suivi_agents.keys() if noms_sont_compatibles(agent_nom, k)]
-        
-        agent_absentes = set()
-        agent_travail = set()
-        agent_toutes_dates = set()
+        # Trouver le planning PDF correspondant via la correspondance intelligente des noms
+        matched_schedule = {}
         type_c = "Temps plein"
         
-        for k in matched_keys:
-            agent_absentes.update(suivi_agents[k]["dates_absentes"])
-            agent_travail.update(suivi_agents[k]["dates_travail"])
-            agent_toutes_dates.update(suivi_agents[k]["toutes_dates"])
-            if k in agent_types_contrat:
-                type_c = agent_types_contrat[k]
-                
-        # Pour chaque date enregistrée dans le planning de l'agent
-        dates_triees = sorted(list(agent_toutes_dates), key=lambda x: datetime.strptime(x, '%d/%m/%Y'))
+        for pdf_name, schedule_dict in planning_agents.items():
+            if noms_sont_compatibles(agent_nom, pdf_name):
+                matched_schedule.update(schedule_dict)
+                if pdf_name in agent_types_contrat:
+                    type_c = agent_types_contrat[pdf_name]
+                break
         
-        for d in dates_triees:
-            # Si l'agent est en congé payé, maladie, AT... on l'exclut strictement de la liste des dispo
-            if d in agent_absentes:
-                continue
-            # S'il travaille ce jour-là, il n'est pas disponible
-            if d in agent_travail:
-                continue
-                
-            # S'il est libre ce jour-là, on ajoute une ligne dédiée !
-            tableau_resultats.append({
-                "Site": site,
-                "Agent": agent_nom,
-                "Type de contrat": type_c,
-                "Date disponible": d,
-                "Créneau horaire": "Journée complète (00h00 - 24h00)",
-                "Dernier recours": "" # Case vide interactive
-            })
+        # Si un planning a été trouvé pour cet agent, on extrait ses jours de repos (disponibles)
+        if matched_schedule:
+            dates_triees = sorted(list(matched_schedule.keys()), key=lambda x: datetime.strptime(x, '%d/%m/%Y'))
+            for d in dates_triees:
+                statut = matched_schedule[d]
+                # L'agent est disponible UNIQUEMENT s'il est en REPOS (ni travail, ni absence CP/maladie)
+                if statut == "REPOS":
+                    tableau_resultats.append({
+                        "Site": site,
+                        "Agent": agent_nom,
+                        "Type de contrat": type_c,
+                        "Date disponible": d,
+                        "Créneau horaire": "Journée complète (Libre / Repos)",
+                        "Dernier recours": "" # Case vide interactive
+                    })
+        else:
+            # Optionnel : si l'agent n'a pas de PDF importé, on ne l'affiche pas en faux disponible pour sécuriser l'astreinte
+            pass
             
     if tableau_resultats:
         df_table = pd.DataFrame(tableau_resultats)
@@ -244,8 +223,8 @@ if not df_agents.empty:
             use_container_width=True
         )
         
-        st.info("💡 **Règles appliquées :** Les agents en congés payés, arrêts maladie ou autres absences sont automatiquement filtrés et masqués. Chaque jour de repos libre apparaît sur sa propre ligne.")
+        st.info("💡 **Sécurité active :** Seuls les agents dont les plannings PDF ont été analysés et qui ont un **REPOS** officiel validé le jour J apparaissent dans cette liste. Ceux qui travaillent ou sont en congés/maladie sont filtrés.")
     else:
-        st.warning("⚠️ Aucune disponibilité trouvée avec les fichiers importés (vérifiez que les plannings PDF de la semaine sont bien chargés).")
+        st.warning("⚠️ Aucune disponibilité en 'REPOS' trouvée. Vérifiez que les plannings PDF de la bonne semaine ont bien été importés.")
 else:
     st.warning("⚠️ Veuillez importer le fichier référentiel.")
