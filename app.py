@@ -121,8 +121,8 @@ if fichiers_planning:
                     # Vérifier si la ligne contient une date de la semaine
                     for j_str in jours_semaine:
                         dt = datetime.strptime(j_str, '%d/%m/%Y')
-                        fmt_ court = dt.strftime('%d/%m')
-                        if j_str in line or fmt_ court in line:
+                        fmt_court = dt.strftime('%d/%m')
+                        if j_str in line or fmt_court in line:
                             jour_actif_actuel = j_str
                             break
                     
