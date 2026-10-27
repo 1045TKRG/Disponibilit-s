@@ -103,7 +103,7 @@ if fichiers_planning:
                 start_week1 = jan4 - timedelta(days=jan4.weekday())
                 start_target = start_week1 + timedelta(weeks=num_semaine - 1)
                 
-                jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y'] for i in range(7)]
+                jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
                 semaine_agent = {j: {"statut": "REPOS", "intervalles": []} for j in jours_semaine}
                 
                 # Extraction strictement unique : on cherche des lignes contenant des services réels (ex: J01, N01 ou horaires)
