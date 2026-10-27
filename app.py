@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🚨 SOS Remplacement - Assistant (Détection Automatique des Repos)")
+st.title("🚨 SOS Remplacement - Assistant (Extraction Grille Comète)")
 st.markdown("---")
 
 # ---------------------------------------------------------
@@ -56,7 +56,7 @@ if erreur:
     st.stop()
 
 # ---------------------------------------------------------
-# 2. ANALYSE AVEC DÉTECTION INTELLIGENTE DES REPOS
+# 2. ANALYSE FIABLE DES CRÉneaux COMÈTE
 # ---------------------------------------------------------
 planning_agents = {}
 logs_debug = []
@@ -76,7 +76,7 @@ if fichiers_planning:
                 if t:
                     for l in t.split('\n'):
                         l_clean = l.strip()
-                        if l_clean and l_clean not in lignes_texte:
+                        if l_clean:
                             lignes_texte.append(l_clean)
             
             texte_global = "\n".join(lignes_texte)
@@ -106,70 +106,54 @@ if fichiers_planning:
                 jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
                 semaine_agent = {j: {"statut": "REPOS", "intervalles": []} for j in jours_semaine}
                 
-                # Analyse ligne par ligne pour détecter si un jour est explicitement en REPOS ou en TRAVAIL
-                # Dans Comète, les jours de repos comportent la mention "REPOS", "CONGÉ" ou aucune plage horaire valide
+                # Extraction des paires d'heures par recherche directe de blocs horaires (ex: "07:40" et "15:40")
+                # On associe chaque service trouvé à l'ordre chronologique des jours de la semaine
+                services_trouves = []
+                seen_pairs = set()
                 
-                # On collecte toutes les paires d'heures valides du fichier
-                services_valides = []
                 for line in lignes_texte:
-                    line_upper = line.upper()
-                    if "TOTAL" in line_upper or re.match(r'^\s*[0-9]+\.[0-9]+\s*$', line) or len(line) < 5:
+                    if "TOTAL" in line.upper() or len(line) < 4:
                         continue
                     
+                    # Recherche de toutes les occurrences d'heures sur la ligne
                     hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
                     if len(hours) >= 2:
+                        # On prend la première paire d'heures valide de la ligne
                         h1, h2 = hours[0], hours[1]
-                        try:
-                            t1 = datetime.strptime(h1, '%H:%M')
-                            t2 = datetime.strptime(h2, '%H:%M')
-                            diff = (t2 - t1).total_seconds()
-                            if diff <= 0: diff += 24 * 3600
-                            duree = diff / 3600.0
-                            
-                            # Vacation standard entre 3h et 13h
-                            if 3.0 <= duree <= 13.0:
-                                if (h1, h2) not in services_valides:
-                                    services_valides.append((h1, h2))
-                        except Exception:
-                            pass
+                        pair = (h1, h2)
+                        if pair not in seen_pairs:
+                            try:
+                                t1 = datetime.strptime(h1, '%H:%M')
+                                t2 = datetime.strptime(h2, '%H:%M')
+                                diff = (t2 - t1).total_seconds()
+                                if diff <= 0: diff += 24 * 3600
+                                duree = diff / 3600.0
+                                
+                                # Un service de centraliste dure entre 3h et 13h
+                                if 3.0 <= duree <= 13.0:
+                                    seen_pairs.add(pair)
+                                    services_trouves.append(pair)
+                            except Exception:
+                                pass
 
-                # Attribution intelligente aux 7 jours de la semaine
-                # S'il y a la mention explicite de repos dans le texte global ou si on a 5-6 services, 
-                # on laisse un ou deux jours en REPOS.
-                # Par défaut, on mappe les services trouvés (ex: 5 ou 6 max) et on laisse les trous en REPOS.
-                # Si le fichier contient 6 services, le 7ème jour (ex: le 5ème ou 6ème jour) devient REPOS.
-                
-                service_idx = 0
+                # Mappage des services trouvés sur les jours de la semaine
+                # Si un jour n'a pas de service identifié, il est mis en REPOS.
                 for idx, j_target in enumerate(jours_semaine):
-                    # On cherche si la ligne correspondante ou le jour indique un repos dans le texte brut
-                    dt_jour = datetime.strptime(j_target, '%d/%m/%Y')
-                    date_courte = dt_jour.strftime('%d/%m')
-                    
-                    est_repos_explicite = False
-                    for line in lignes_texte:
-                        if date_courte in line and ("REPOS" in line.upper() or "CONGÉ" in line.upper() or "RTT" in line.upper()):
-                            est_repos_explicite = True
-                            break
-
-                    if est_repos_explicite or (len(services_valides) < 7 and idx >= len(services_valides)):
+                    # S'il y a un service disponible pour cet index de jour
+                    if idx < len(services_trouves):
+                        h1, h2 = services_trouves[idx]
+                        dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
+                        dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
+                        if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
+                        
+                        semaine_agent[j_target]["statut"] = "TRAVAIL"
+                        semaine_agent[j_target]["intervalles"] = [(dt_deb, dt_fin)]
+                    else:
                         semaine_agent[j_target]["statut"] = "REPOS"
                         semaine_agent[j_target]["intervalles"] = []
-                    else:
-                        if service_idx < len(services_valides):
-                            h1, h2 = services_valides[service_idx]
-                            dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
-                            dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
-                            if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
-                            
-                            semaine_agent[j_target]["statut"] = "TRAVAIL"
-                            semaine_agent[j_target]["intervalles"] = [(dt_deb, dt_fin)]
-                            service_idx += 1
-                        else:
-                            semaine_agent[j_target]["statut"] = "REPOS"
-                            semaine_agent[j_target]["intervalles"] = []
 
                 planning_agents[agent_name_pdf].update(semaine_agent)
-                logs_debug.append(f"✅ Fichier `{fichier.name}` ({agent_name_pdf}) : Analyse des repos/travail effectuée.")
+                logs_debug.append(f"✅ Fichier `{fichier.name}` ({agent_name_pdf}) : {len(services_trouves)} services valides mappés.")
             else:
                 logs_debug.append(f"⚠️ Fichier `{fichier.name}` : Semaine introuvable dans le nom.")
 
