@@ -242,30 +242,3 @@ for item in tous_agents:
                         intervalles_veille = info_veille.get("intervalles", [])
                         if intervalles_veille:
                             derniere_fin_veille = max([iv[1] for iv in intervalles_veille])
-                            debut_autorise = derniere_fin_veille + timedelta(hours=11)
-                            if debut_autorise.date() == dt_jour.date():
-                                heure_min_str = debut_autorise.strftime('%H:%M')
-                                dt_fin_max = min(debut_autorise + timedelta(hours=8), datetime.combine(dt_jour.date(), datetime.max.time()) - timedelta(hours=1))
-                                creneau_texte = f"De {heure_min_str} à {dt_fin_max.strftime('%H:%M')} (Repos 11h respecté)"
-  if idx_d + 1 < len(dates_triees):
-                            info_lendemain = matched_schedule.get(dates_triees[idx_d + 1], {})
-                            intervalles_lendemain = info_lendemain.get("intervalles", [])
-                            if intervalles_lendemain:
-                                premiere_debut_lendemain = min([iv[0] for iv in intervalles_lendemain])
-                                
-                                max_fin_par_repos = premiere_debut_lendemain - timedelta(hours=11)
-                                dt_fin_pot_10h = derniere_fin + timedelta(hours=heures_restantes)
-                                dt_fin_pot = min(dt_fin_pot_10h, max_fin_par_repos)
-                                
-                                if dt_fin_pot > derniere_fin:
-                                    heures_restantes = (dt_fin_pot - derniere_fin).total_seconds() / 3600.0
-                                    limite_fin_str = dt_fin_pot.strftime('%H:%M')
-                                else:
-                                    heures_restantes = 0.0
-                                    limite_fin_str = heure_debut_str
-                            else:
-                                dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
-                                limite_fin_str = dt_fin_pot.strftime('%H:%M')
-                        else:
-                            dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
-                            limite_fin_str = dt_fin_pot.strftime('%H:%M')
