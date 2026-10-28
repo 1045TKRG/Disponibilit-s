@@ -264,9 +264,12 @@ for item in tous_agents:
                         intervalles_lendemain = info_lendemain.get("intervalles", [])
                         if intervalles_lendemain:
                             premiere_debut_lendemain = min([iv[0] for iv in intervalles_lendemain])
+                            
+                            # Règle stricte des 11h de repos par rapport à la prise de service du lendemain (ex: 16h40 - 11h = 05h40)
                             max_fin_par_repos = premiere_debut_lendemain - timedelta(hours=11)
                             dt_fin_pot_10h = derniere_fin + timedelta(hours=heures_restantes)
                             dt_fin_pot = min(dt_fin_pot_10h, max_fin_par_repos)
+                            
                             if dt_fin_pot > derniere_fin:
                                 heures_restantes = (dt_fin_pot - derniere_fin).total_seconds() / 3600.0
                                 limite_fin_str = dt_fin_pot.strftime('%H:%M')
@@ -281,6 +284,7 @@ for item in tous_agents:
                         limite_fin_str = dt_fin_pot.strftime('%H:%M')
 
                     duree_fmt = decimal_to_hm(heures_restantes)
+                    # Affichage ajusté prenant en compte l'heure limite calculée via le repos du lendemain
                     creneau_texte = f"{duree_fmt} max ce jour (entre {heure_debut_str} à {limite_fin_str} demain)"
                     opportunite = "possibilité de faire travailler l’agent"
             
