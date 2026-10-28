@@ -212,7 +212,7 @@ for item in tous_agents:
         jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
         
         if jours_repos_total < 1:
-            st.warning(f"⚠️ **Alerte Réglementaire pour {agent_nom}** : Cet agent n'a aucun jour de repos répertorié cette semaine.")
+            st.warning(f"⚠️ **Alerte Réglementaire pour {agent_nom}** : Cet agent n'aucun jour de repos répertorié cette semaine.")
 
         for idx_d, d in enumerate(dates_triees):
             info_jour = matched_schedule[d]
@@ -271,8 +271,8 @@ for item in tous_agents:
                         dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
                         limite_fin_str = dt_fin_pot.strftime('%H:%M')
 
-                    duree_fmt = decimal_to_hm(heures_restantes)
-                    creneau_texte = f"{duree_fmt} max ce jour à compter de {heure_debut_str} à {limite_fin_str}"
+                    # MODIFICATION APPLIQUÉE ICI : Affichage sans le préfixe de durée
+                    creneau_texte = f"à compter de {heure_debut_str} à {limite_fin_str}"
                     opportunite = "possibilité de faire travailler l’agent"
             
             tableau_resultats.append({
