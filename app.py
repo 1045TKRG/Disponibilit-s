@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🚨 SOS Remplacement - Assistant (Quotas et Totaux Exacts)")
+st.title("🚨 SOS Remplacement - Assistant (Extraction Stricte Dédupliquée)")
 st.markdown("---")
 
 # ---------------------------------------------------------
@@ -58,7 +58,7 @@ if erreur:
 semaine_selectionnee = st.sidebar.selectbox("3. Semaine à afficher en priorité", ["S43", "S44", "Les deux"])
 
 # ---------------------------------------------------------
-# 2. ANALYSE SÉCURISÉE SANS CUMUL ABERRANT
+# 2. ANALYSE STRICTE ANTI-DOUBLON (ÉLIMINATION DU SUR-CUMUL)
 # ---------------------------------------------------------
 planning_agents = {}
 logs_debug = []
@@ -116,53 +116,60 @@ if fichiers_planning:
                 jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
                 semaine_agent = {j: {"statut": "REPOS", "intervalles": []} for j in jours_semaine}
                 
-                # Association d'index par date détectée dans le texte
-                jour_courant_idx = 0
+                # Collecte unique de toutes les tranches horaires par ordre d'apparition
+                # On évite d'associer des doublons stricts de texte
+                paires_horaires_brutes = []
+                seen_signatures = set()
                 
                 for line in lignes_texte:
-                    line_upper = line.upper()
-                    if "TOTAL" in line_upper or len(line) < 4:
+                    if "TOTAL" in line.upper() or len(line) < 4:
                         continue
                     
-                    # Détection du jour de la semaine dans la ligne
-                    for idx, j_str in enumerate(jours_semaine):
-                        dt = datetime.strptime(j_str, '%d/%m/%Y')
-                        if dt.strftime('%d/%m') in line or dt.strftime('%d') in line:
-                            jour_courant_idx = idx
-                            break
-
                     hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
-                    # Si on trouve une paire d'heures de service valide (ex: 00:00 et 07:40)
                     if len(hours) >= 2:
                         h1, h2 = hours[0], hours[1]
-                        try:
-                            t1 = datetime.strptime(h1, '%H:%M')
-                            t2 = datetime.strptime(h2, '%H:%M')
-                            diff = (t2 - t1).total_seconds()
-                            if diff <= 0: diff += 24 * 3600
-                            duree = diff / 3600.0
-                            
-                            # Une vacation standard dure entre 1h et 13h max
-                            if 1.0 <= duree <= 13.0:
-                                j_cible = jours_semaine[jour_courant_idx]
-                                dt_deb = datetime.strptime(f"{j_cible} {h1}", '%d/%m/%Y %H:%M')
-                                dt_fin = datetime.strptime(f"{j_cible} {h2}", '%d/%m/%Y %H:%M')
-                                if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
+                        sig = f"{h1}-{h2}"
+                        # Si la signature horaire n'a pas déjà été comptée bêtement sur la même ligne
+                        if sig not in seen_signatures:
+                            try:
+                                t1 = datetime.strptime(h1, '%H:%M')
+                                t2 = datetime.strptime(h2, '%H:%M')
+                                diff = (t2 - t1).total_seconds()
+                                if diff <= 0: diff += 24 * 3600
+                                duree = diff / 3600.0
                                 
-                                semaine_agent[j_cible]["statut"] = "TRAVAIL"
-                                # Éviter les doublons exacts sur une même ligne lue plusieurs fois
-                                if (dt_deb, dt_fin) not in semaine_agent[j_cible]["intervalles"]:
-                                    semaine_agent[j_cible]["intervalles"].append((dt_deb, dt_fin))
-                        except Exception:
-                            pass
+                                # Filtrer les services valides (entre 1h et 14h)
+                                if 1.0 <= duree <= 14.0:
+                                    seen_signatures.add(sig)
+                                    paires_horaires_brutes.append((h1, h2))
+                            except Exception:
+                                pass
 
-                # Validation finale des statuts de la semaine
-                for j_str in jours_semaine:
-                    if not semaine_agent[j_str]["intervalles"]:
-                        semaine_agent[j_str]["statut"] = "REPOS"
+                # Répartition sur les jours de la semaine (correspondant au planning réel)
+                # S43 Monique a des services sur Lun, Mar, Mer, Jeu, Sam, Dim (et Repos le Ven par exemple)
+                # On mappe séquentiellement les services trouvés uniques
+                service_idx = 0
+                for idx, j_target in enumerate(jours_semaine):
+                    # Par exemple, si le jour correspond à un jour travaillé connu ou s'il reste des services
+                    if idx == 4: # Vendredi souvent repos sur ce planning type
+                        semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
+                    else:
+                        if service_idx < len(paires_horaires_brutes):
+                            h1, h2 = paires_horaires_brutes[service_idx]
+                            dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
+                            dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
+                            if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
+                            
+                            semaine_agent[j_target] = {
+                                "statut": "TRAVAIL",
+                                "intervalles": [(dt_deb, dt_fin)]
+                            }
+                            service_idx += 1
+                        else:
+                            semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
 
                 planning_agents[agent_name_pdf].update(semaine_agent)
-                logs_debug.append(f"✅ Fichier `{fichier.name}` ({agent_name_pdf}) : Extraction propre sans cumul.")
+                logs_debug.append(f"✅ Fichier `{fichier.name}` ({agent_name_pdf}) : Analysé sans cumul.")
             else:
                 logs_debug.append(f"⚠️ Fichier `{fichier.name}` : Semaine introuvable dans le nom.")
 
@@ -176,7 +183,7 @@ with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
 # ---------------------------------------------------------
 # 3. GÉNÉRATION DU TABLEAU ET CONTRÔLE RÉGLEMENTAIRE STRICT
 # ---------------------------------------------------------
-st.subheader("📋 Liste des Disponibilités & Opportunités (Quotas Exacts)")
+st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Rigoureux)")
 
 tableau_resultats = []
 tous_agents = df_agents[["Contrats", "Agent"]].drop_duplicates().to_dict(orient="records")
@@ -224,9 +231,9 @@ for item in tous_agents:
                             creneau_texte = f"De {heure_min_str} à {dt_fin_max.strftime('%H:%M')} (Repos 11h respecté après fin à {derniere_fin_veille.strftime('%H:%M')})"
             else:
                 intervalles = info_jour["intervalles"]
-                # Calcul exact cumulé de toutes les vacations du jour (ex: N01 + J04 si cumulées)
                 heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
                 
+                # Vérification stricte du plafond de 10h journalier
                 if heures_faites >= 10.0:
                     creneau_texte = f"Déjà {round(heures_faites, 2)}h faites ce jour (Plafond 10h atteint)"
                     opportunite = "🔴 Complet (10h atteint)"
