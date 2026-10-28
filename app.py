@@ -65,7 +65,6 @@ if erreur:
 
 semaine_selectionnee = st.sidebar.selectbox("3. Semaine à afficher en priorité", ["S43", "S44", "Les deux"])
 
-# Fonction utilitaire pour convertir les heures décimales en format XhMM
 def decimal_to_hm(heures_dec):
     h = int(heures_dec)
     m = int(round((heures_dec - h) * 60))
@@ -80,10 +79,15 @@ def decimal_to_hm(heures_dec):
 planning_agents = {}
 logs_debug = []
 
-def noms_sont_compatibles(excel_name, pdf_name):
-    e_words = set(excel_name.upper().split())
-    p_words = set(pdf_name.upper().split())
-    return len(e_words.intersection(p_words)) >= min(len(e_words), len(p_words))
+def noms_sont_compatibles(excel_name, pdf_text):
+    # Vérification souple : si au moins le nom de famille ou les mots clés matchent
+    e_words = [w.upper() for w in re.findall(r'\w+', excel_name) if len(w) > 2]
+    p_text_upper = pdf_text.upper()
+    if not e_words:
+        return excel_name.upper() in p_text_upper
+    # On vérifie si les mots principaux composant le nom de l'agent sont présents dans le texte du PDF
+    matches = sum(1 for word in e_words if word in p_text_upper)
+    return matches >= min(len(e_words), 1)
 
 if fichiers_planning:
     for fichier in fichiers_planning:
@@ -110,15 +114,15 @@ if fichiers_planning:
                             lignes_texte.append(l_clean)
             
             texte_global = "\n".join(lignes_texte)
-            text_upper = texte_global.upper()
             
             agents_trouves_dans_pdf = []
             for ex_agent in df_agents["Agent"].unique():
-                if ex_agent.upper() in text_upper:
-                    agents_trouves_dans_pdf.append(ex_agent.upper())
+                if noms_sont_compatibles(ex_agent, texte_global):
+                    agents_trouves_dans_pdf.append(ex_agent)
             
+            logs_debug.append(f"📁 Fichier `{fichier.name}` : {len(agents_trouves_dans_pdf)} agent(s) détecté(s) sur {len(df_agents['Agent'].unique())} du référentiel.")
+
             if not agents_trouves_dans_pdf:
-                logs_debug.append(f"❌ `{fichier.name}` : Aucun agent trouvé.")
                 continue
 
             for num_semaine in semaines_a_traiter:
@@ -182,17 +186,16 @@ if fichiers_planning:
                         else:
                             semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
 
-                for agent_name_pdf in agents_trouves_dans_pdf:
-                    cle_dict = f"{agent_name_pdf}_S{num_semaine}"
+                for agent_name in agents_trouves_dans_pdf:
+                    cle_dict = f"{agent_name}_S{num_semaine}"
                     if cle_dict not in planning_agents:
                         planning_agents[cle_dict] = {}
                     planning_agents[cle_dict].update(semaine_agent)
-                    logs_debug.append(f"✅ Synchro Semaine S{num_semaine} OK pour {agent_name_pdf}")
 
         except Exception as e:
             logs_debug.append(f"⚠️ Erreur de lecture sur {fichier.name} : {e}")
 
-with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
+with st.expander("🔍 Journal de diagnostic des PDF", expanded=True):
     for log in logs_debug:
         st.write(log)
 
@@ -221,9 +224,6 @@ for item in tous_agents:
                 key=lambda x: datetime.strptime(x, '%d/%m/%Y')
             )
             jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
-            
-            if jours_repos_total < 1:
-                st.warning(f"⚠️ **Alerte Réglementaire pour {agent_nom}** : Cet agent n'a aucun jour de repos répertorié cette semaine.")
 
             for idx_d, d in enumerate(dates_triees):
                 info_jour = matched_schedule[d]
@@ -242,3 +242,23 @@ for item in tous_agents:
                         intervalles_veille = info_veille.get("intervalles", [])
                         if intervalles_veille:
                             derniere_fin_veille = max([iv[1] for iv in intervalles_veille])
+                            debut_autorise = derniere_fin_veille + timedelta(hours=11)
+                            if debut_autorise.date() == dt_jour.date():
+                                heure_min_str = debut_autorise.strftime('%H:%M')
+                                dt_fin_max = min(debut_autorise + timedelta(hours=8), datetime.combine(dt_jour.date(), datetime.max.time()) - timedelta(hours=1))
+                                creneau_texte = f"De {heure_min_str} à {dt_fin_max.strftime('%H:%M')} (Repos 11h respecté)"
+                else:
+                    intervalles = info_jour["intervalles"]
+                    heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
+                    
+                    if heures_faites >= 10.0:
+                        h_faites_fmt = decimal_to_hm(heures_faites)
+                        creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
+                        opportunite = "🔴 Complet (10h atteint)"
+                    else:
+                        derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
+                        heure_debut_str = derniere_fin.strftime('%H:%M')
+                        heures_restantes = max(0.0, 10.0 - heures_faites)
+                        
+                        limite_fin_str = ""
+                        if idx_d + 1 < len(dates_trie
