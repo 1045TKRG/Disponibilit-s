@@ -181,7 +181,7 @@ if fichiers_planning:
                     logs_debug.append("⚠️ Semaine introuvable.")
 
         except Exception as e:
-            logs_debug.append(f"⚠️ Erreur de lecture.")
+            logs_debug.append("⚠️ Erreur de lecture.")
 
 with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
     for log in logs_debug:
@@ -221,4 +221,22 @@ for item in tous_agents:
                 creneau_texte = "Journée complète (00h00 - 24h00)"
                 if jours_repos_total == 1:
                     creneau_texte += " — seul jour de repos hebdo"
-                opportunite = "🟢 Jour de Repos
+                opportunite = "🟢 Jour de Repos"
+                
+                if idx_d > 0:
+                    veille_d = dates_triees[idx_d - 1]
+                    info_veille = matched_schedule.get(veille_d, {})
+                    intervalles_veille = info_veille.get("intervalles", [])
+                    if intervalles_veille:
+                        derniere_fin_veille = max([iv[1] for iv in intervalles_veille])
+                        debut_autorise = derniere_fin_veille + timedelta(hours=11)
+                        if debut_autorise.date() == dt_jour.date():
+                            heure_min_str = debut_autorise.strftime('%H:%M')
+                            dt_fin_max = min(debut_autorise + timedelta(hours=8), datetime.combine(dt_jour.date(), datetime.max.time()) - timedelta(hours=1))
+                            creneau_texte = f"De {heure_min_str} à {dt_fin_max.strftime('%H:%M')} (Repos 11h respecté)"
+            else:
+                intervalles = info_jour["intervalles"]
+                heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
+                
+                if heures_faites >= 10.0:
+                    creneau_texte = f"Déjà {decimal_to_hm(heures_
