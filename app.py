@@ -3,6 +3,7 @@ import pandas as pd
 import pypdf
 import re
 from datetime import datetime, timedelta
+from io import BytesIO
 
 # Configuration de la page
 st.set_page_config(
@@ -11,7 +12,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🚨 SOS Remplacement - Assistant (Conforme & Chronologique)")
+st.title("🚨 SOS Remplacement - Assistant (Conforme, Chronologique & Traçable)")
 st.markdown("---")
 
 # ---------------------------------------------------------
@@ -189,7 +190,7 @@ with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
 # ---------------------------------------------------------
 # 3. GÉNÉRATION DU TABLEAU ET CONTRÔLE RÉGLEMENTAIRE STRICT
 # ---------------------------------------------------------
-st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Rigoureux)")
+st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Rigoureux & Traçable)")
 
 tableau_resultats = []
 tous_agents = df_agents[["Contrats", "Agent"]].drop_duplicates().to_dict(orient="records")
@@ -209,7 +210,7 @@ for item in tous_agents:
         jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
         
         if jours_repos_total < 1:
-            st.warning(f"⚠️ **Alerte Réglementaire pour {agent_nom}** : Cet agent n'aucun jour de repos répertorié cette semaine.")
+            st.warning(f"⚠️ **Alerte Réglementaire pour {agent_nom}** : Cet agent n'a aucun jour de repos répertorié cette semaine.")
 
         for idx_d, d in enumerate(dates_triees):
             info_jour = matched_schedule[d]
@@ -248,7 +249,6 @@ for item in tous_agents:
                     heure_debut_str = derniere_fin.strftime('%H:%M')
                     heures_restantes = max(0.0, 10.0 - heures_faites)
                     
-                    # Vérification de la contrainte 11h de repos avant la vacation du lendemain
                     limite_fin_str = ""
                     if idx_d + 1 < len(dates_triees):
                         info_lendemain = matched_schedule.get(dates_triees[idx_d + 1], {})
@@ -281,23 +281,52 @@ for item in tous_agents:
                 "Date": d,
                 "Type d'opportunité": opportunite,
                 "Créneau horaire / Heures possibles": creneau_texte,
-                "Dernier recours": ""
+                "Statut / Suivi superviseur": "À proposer",
+                "Motif de refus / Notes": ""
             })
 
 if tableau_resultats:
     df_table = pd.DataFrame(tableau_resultats)
-    st.data_editor(
+    
+    st.info("💡 **Conseil Traçabilité** : Utilisez la colonne *Statut / Suivi superviseur* pour noter si un agent a été proposé ou refusé par la hiérarchie. Cela vous servira de journal officiel en cas de contestation.")
+
+    edited_df = st.data_editor(
         df_table,
         column_config={
-            "Dernier recours": st.column_config.TextColumn(
-                "Dernier recours (Saisie quotidienne)",
-                help="Saisir manuellement des notes",
+            "Statut / Suivi superviseur": st.column_config.SelectboxColumn(
+                "Statut / Suivi superviseur",
+                help="Suivez l'état des propositions auprès de la hiérarchie",
+                options=["À proposer", "Proposé - En attente", "Validé / Retenu", "Refusé par superviseur"],
+                required=True,
+            ),
+            "Motif de refus / Notes": st.column_config.TextColumn(
+                "Motif de refus / Notes",
+                help="Notez ici les raisons invoquées en cas de blocage par la hiérarchie",
                 max_chars=150
             )
         },
         disabled=["Contrats", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
         hide_index=True,
     )
-    st.success("✅ Tableau affiché avec succès !")
+    
+    # ---------------------------------------------------------
+    # BOUTON D'EXPORT EXCEL OFFICIEL
+    # ---------------------------------------------------------
+    st.markdown("---")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.success("✅ Données prêtes à être partagées ou exportées pour justifier vos choix de planning.")
+    with col2:
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
+        processed_data = output.getvalue()
+        
+        st.download_button(
+            label="📥 Télécharger le rapport (Excel)",
+            data=processed_data,
+            file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 else:
     st.warning("⚠️ Aucun résultat dans le tableau. Vérifiez vos fichiers PDF importés.")
