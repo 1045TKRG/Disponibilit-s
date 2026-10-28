@@ -39,7 +39,7 @@ def charger_referentiel(excel_file):
         
         for idx, row in df_raw.iterrows():
             val_col_a = str(row[0]).strip() if pd.notna(row[0]) else ""
-            if val_col_a.upper() in ["SITES", "SITE", "NAN", "", "CONTRATS"]:
+            if val_col_a.upper() in ["SITES", "SITE", "NAN", "", "CONTRATS", "CONTRAT"]:
                 continue
             site_actuel = val_col_a
             
@@ -47,7 +47,7 @@ def charger_referentiel(excel_file):
                 agent_nom = str(row[col_idx]).strip() if pd.notna(row[col_idx]) else ""
                 if agent_nom and agent_nom.upper() not in ["NAN", "NOM / PRENOM", "AGENT"]:
                     donnees_traitees.append({
-                        "Contrats": site_actuel,
+                        "Contrat": site_actuel,
                         "Agent": agent_nom
                     })
         return pd.DataFrame(donnees_traitees), None
@@ -89,7 +89,6 @@ if fichiers_planning:
     for fichier in fichiers_planning:
         match_semaine = re.search(r'S([0-9]{1,2})', fichier.name.upper())
         
-        # Détermination propre des semaines cibles
         semaines_a_traiter = []
         if match_semaine:
             semaines_a_traiter.append(int(match_semaine.group(1)))
@@ -203,13 +202,12 @@ with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
 st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Rigoureux)")
 
 tableau_resultats = []
-tous_agents = df_agents[["Contrats", "Agent"]].drop_duplicates().to_dict(orient="records")
+tous_agents = df_agents[["Contrat", "Agent"]].drop_duplicates().to_dict(orient="records")
 
 for item in tous_agents:
-    contrat_nom = item["Contratos"]
+    contrat_nom = item["Contrat"]
     agent_nom = item["Agent"]
     
-    # On cherche toutes les semaines correspondantes pour cet agent dans le dictionnaire global
     matched_schedules_list = []
     for k, sched in planning_agents.items():
         nom_base = k.rsplit('_S', 1)[0]
@@ -321,18 +319,4 @@ if tableau_resultats:
     st.markdown("---")
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.success("✅ Données prêtes à être exportées pour vos justificatifs de planning.")
-    with col2:
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
-        processed_data = output.getvalue()
-        
-        st.download_button(
-            label="📥 Télécharger le rapport (Excel)",
-            data=processed_data,
-            file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-else:
-    st.warning("⚠️ Aucun résultat dans le tableau. Vérifiez vos fichiers PDF importés ou le filtre de semaine dans le menu de gauche.")
+        st.success("✅ Données
