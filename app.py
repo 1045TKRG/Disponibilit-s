@@ -68,7 +68,7 @@ def decimal_to_hm(heures_dec):
     return f"{h}h{m:02d}"
 
 # ---------------------------------------------------------
-# 2. ANALYSE CHRONOLOGIQUE ET INDEXATION PROPRE
+# 2. ANALYSE CHRONOLOGIQUE ET MULTI-AGENTS DES PDF
 # ---------------------------------------------------------
 planning_agents = {}
 logs_debug = []
@@ -88,6 +88,9 @@ if fichiers_planning:
 
         try:
             reader = pypdf.PdfReader(fichier)
+            
+            # On découpe le PDF par page ou on extrait tout en gardant les blocs par agent si possible
+            # Ici, on extrait l'ensemble des lignes du PDF globalement
             lignes_texte = []
             for page in reader.pages:
                 t = page.extract_text(extraction_mode="layout") or page.extract_text()
@@ -100,85 +103,86 @@ if fichiers_planning:
             texte_global = "\n".join(lignes_texte)
             text_upper = texte_global.upper()
             
-            agent_name_pdf = None
+            # CORRECTION : On cherche TOUS les agents du référentiel présents dans ce fichier PDF
+            agents_trouves_dans_pdf = []
             for ex_agent in df_agents["Agent"].unique():
                 if ex_agent.upper() in text_upper:
-                    agent_name_pdf = ex_agent.upper()
-                    break
+                    agents_trouves_dans_pdf.append(ex_agent.upper())
             
-            if not agent_name_pdf:
+            if not agents_trouves_dans_pdf:
                 logs_debug.append(f"❌ Fichier `{fichier.name}` : Aucun agent du référentiel trouvé.")
                 continue
-            
-            if agent_name_pdf not in planning_agents:
-                planning_agents[agent_name_pdf] = {}
 
-            if match_semaine:
-                num_semaine = int(match_semaine.group(1))
-                annee_ref = 2026
-                try:
-                    start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
-                except Exception:
-                    jan4 = datetime(annee_ref, 1, 4)
-                    start_week1 = jan4 - timedelta(days=jan4.weekday())
-                    start_target = start_week1 + timedelta(weeks=num_semaine - 1)
-                
-                jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
-                semaine_agent = {j: {"statut": "REPOS", "intervalles": []} for j in jours_semaine}
-                
-                services_tries = []
-                for line in lignes_texte:
-                    if "TOTAL" in line.upper() or len(line) < 4:
-                        continue
+            for agent_name_pdf in agents_trouves_dans_pdf:
+                if agent_name_pdf not in planning_agents:
+                    planning_agents[agent_name_pdf] = {}
+
+                if match_semaine:
+                    num_semaine = int(match_semaine.group(1))
+                    annee_ref = 2026
+                    try:
+                        start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
+                    except Exception:
+                        jan4 = datetime(annee_ref, 1, 4)
+                        start_week1 = jan4 - timedelta(days=jan4.weekday())
+                        start_target = start_week1 + timedelta(weeks=num_semaine - 1)
                     
-                    hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
-                    if len(hours) >= 2:
-                        h1, h2 = hours[0], hours[1]
-                        try:
-                            t1 = datetime.strptime(h1, '%H:%M')
-                            t2 = datetime.strptime(h2, '%H:%M')
-                            diff = (t2 - t1).total_seconds()
-                            if diff <= 0: diff += 24 * 3600
-                            duree = diff / 3600.0
-                            
-                            if 1.0 <= duree <= 14.0:
-                                services_tries.append((t1, h1, h2, duree))
-                        except Exception:
-                            pass
+                    jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
+                    semaine_agent = {j: {"statut": "REPOS", "intervalles": []} for j in jours_semaine}
+                    
+                    services_tries = []
+                    for line in lignes_texte:
+                        if "TOTAL" in line.upper() or len(line) < 4:
+                            continue
+                        
+                        hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
+                        if len(hours) >= 2:
+                            h1, h2 = hours[0], hours[1]
+                            try:
+                                t1 = datetime.strptime(h1, '%H:%M')
+                                t2 = datetime.strptime(h2, '%H:%M')
+                                diff = (t2 - t1).total_seconds()
+                                if diff <= 0: diff += 24 * 3600
+                                duree = diff / 3600.0
+                                
+                                if 1.0 <= duree <= 14.0:
+                                    services_tries.append((t1, h1, h2, duree))
+                            except Exception:
+                                pass
 
-                services_tries.sort(key=lambda x: x[0])
+                    services_tries.sort(key=lambda x: x[0])
 
-                services_uniques = []
-                seen_intervalles = set()
-                for s in services_tries:
-                    sig = f"{s[1]}-{s[2]}"
-                    if sig not in seen_intervalles:
-                        seen_intervalles.add(sig)
-                        services_uniques.append((s[1], s[2]))
+                    services_uniques = []
+                    seen_intervalles = set()
+                    for s in services_tries:
+                        sig = f"{s[1]}-{s[2]}"
+                        if sig not in seen_intervalles:
+                            seen_intervalles.add(sig)
+                            services_uniques.append((s[1], s[2]))
 
-                service_idx = 0
-                for idx, j_target in enumerate(jours_semaine):
-                    if idx == 4: # Vendredi repos type
-                        semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
-                    else:
-                        if service_idx < len(services_uniques):
-                            h1, h2 = services_uniques[service_idx]
-                            dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
-                            dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
-                            if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
-                            
-                            semaine_agent[j_target] = {
-                                "statut": "TRAVAIL",
-                                "intervalles": [(dt_deb, dt_fin)]
-                            }
-                            service_idx += 1
-                        else:
+                    service_idx = 0
+                    for idx, j_target in enumerate(jours_semaine):
+                        if idx == 4: # Vendredi repos type
                             semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
+                        else:
+                            if service_idx < len(services_uniques):
+                                h1, h2 = services_uniques[service_idx]
+                                dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
+                                dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
+                                if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
+                                
+                                semaine_agent[j_target] = {
+                                    "statut": "TRAVAIL",
+                                    "intervalles": [(dt_deb, dt_fin)]
+                                }
+                                service_idx += 1
+                            else:
+                                semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
 
-                planning_agents[agent_name_pdf].update(semaine_agent)
-                logs_debug.append(f"✅ Fichier `{fichier.name}` ({agent_name_pdf}) : Synchronisation chronologique appliquée.")
-            else:
-                logs_debug.append(f"⚠️ Fichier `{fichier.name}` : Semaine introuvable dans le nom.")
+                    planning_agents[agent_name_pdf].update(semaine_agent)
+                    logs_debug.append(f"✅ Fichier `{fichier.name}` ({agent_name_pdf}) : Analysé et synchronisé.")
+                else:
+                    logs_debug.append(f"⚠️ Fichier `{fichier.name}` : Semaine introuvable dans le nom.")
 
         except Exception as e:
             logs_debug.append(f"⚠️ Erreur lecture `{fichier.name}` : {e}")
@@ -188,4 +192,55 @@ with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
         st.write(log)
 
 # ---------------------------------------------------------
-#
+# 3. GÉNÉRATION DU TABLEAU ET CONTRÔLE RÉGLEMENTAIRE STRICT
+# ---------------------------------------------------------
+st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Rigoureux)")
+
+tableau_resultats = []
+tous_agents = df_agents[["Contrats", "Agent"]].drop_duplicates().to_dict(orient="records")
+
+for item in tous_agents:
+    contrat_nom = item["Contrats"]
+    agent_nom = item["Agent"]
+    
+    matched_schedule = {}
+    for pdf_name, schedule_dict in planning_agents.items():
+        if noms_sont_compatibles(agent_nom, pdf_name):
+            matched_schedule.update(schedule_dict)
+            break
+    
+    if matched_schedule:
+        dates_triees = sorted(matched_schedule.keys(), key=lambda x: datetime.strptime(x, '%d/%m/%Y'))
+        jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
+        
+        if jours_repos_total < 1:
+            st.warning(f"⚠️ **Alerte Réglementaire pour {agent_nom}** : Cet agent n'a aucun jour de repos répertorié cette semaine.")
+
+        for idx_d, d in enumerate(dates_triees):
+            info_jour = matched_schedule[d]
+            statut = info_jour["statut"]
+            dt_jour = datetime.strptime(d, '%d/%m/%Y')
+            
+            if statut == "REPOS":
+                creneau_texte = "Journée complète (00h00 - 24h00)"
+                if jours_repos_total == 1:
+                    creneau_texte += " — seul jour de repos hebdo"
+                opportunite = "🟢 Jour de Repos"
+                
+                if idx_d > 0:
+                    veille_d = dates_triees[idx_d - 1]
+                    info_veille = matched_schedule.get(veille_d, {})
+                    intervalles_veille = info_veille.get("intervalles", [])
+                    if intervalles_veille:
+                        derniere_fin_veille = max([iv[1] for iv in intervalles_veille])
+                        debut_autorise = derniere_fin_veille + timedelta(hours=11)
+                        if debut_autorise.date() == dt_jour.date():
+                            heure_min_str = debut_autorise.strftime('%H:%M')
+                            dt_fin_max = min(debut_autorise + timedelta(hours=8), datetime.combine(dt_jour.date(), datetime.max.time()) - timedelta(hours=1))
+                            creneau_texte = f"De {heure_min_str} à {dt_fin_max.strftime('%H:%M')} (Repos 11h respecté après fin à {derniere_fin_veille.strftime('%H:%M')})"
+            else:
+                intervalles = info_jour["intervalles"]
+                heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
+                
+                if heures_faites >= 10.0:
+                    creneau_texte = f"
