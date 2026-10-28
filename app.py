@@ -212,7 +212,7 @@ for item in tous_agents:
         jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
         
         if jours_repos_total < 1:
-            st.warning(f"⚠️ **Alerte Réglementaire pour {agent_nom}** : Cet agent n'aucun jour de repos répertorié cette semaine.")
+            st.warning(f"⚠️ **Alerte Réglementaire pour {agent_nom}** : Cet agent n'a aucun jour de repos répertorié cette semaine.")
 
         for idx_d, d in enumerate(dates_triees):
             info_jour = matched_schedule[d]
@@ -266,58 +266,3 @@ for item in tous_agents:
                                 limite_fin_str = heure_debut_str
                         else:
                             dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
-                            limite_fin_str = dt_fin_pot.strftime('%H:%M')
-                    else:
-                        dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
-                        limite_fin_str = dt_fin_pot.strftime('%H:%M')
-
-                    # MODIFICATION APPLIQUÉE ICI : Affichage sans le préfixe de durée
-                    creneau_texte = f"à compter de {heure_debut_str} à {limite_fin_str}"
-                    opportunite = "possibilité de faire travailler l’agent"
-            
-            tableau_resultats.append({
-                "Contrats": contrat_nom,
-                "Agent": agent_nom,
-                "Date": d,
-                "Type d'opportunité": opportunite,
-                "Créneau horaire / Heures possibles": creneau_texte,
-                "Dernier recours": ""
-            })
-
-if tableau_resultats:
-    df_table = pd.DataFrame(tableau_resultats)
-
-    edited_df = st.data_editor(
-        df_table,
-        column_config={
-            "Dernier recours": st.column_config.TextColumn(
-                "Dernier recours (Saisie quotidienne)",
-                help="Saisir manuellement des notes ou commentaires",
-                max_chars=150
-            )
-        },
-        disabled=["Contrats", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
-        hide_index=True,
-    )
-    
-    # ---------------------------------------------------------
-    # BOUTON D'EXPORT EXCEL OFFICIEL
-    # ---------------------------------------------------------
-    st.markdown("---")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.success("✅ Données prêtes à être exportées pour vos justificatifs de planning.")
-    with col2:
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
-        processed_data = output.getvalue()
-        
-        st.download_button(
-            label="📥 Télécharger le rapport (Excel)",
-            data=processed_data,
-            file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-else:
-    st.warning("⚠️ Aucun résultat dans le tableau. Vérifiez vos fichiers PDF importés ou le filtre de semaine dans le menu de gauche.")
