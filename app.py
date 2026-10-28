@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🚨 SOS Remplacement - Assistant (Correction de Syntaxe & Calendrier)")
+st.title("🚨 SOS Remplacement - Assistant (Correction de Syntaxe Finale)")
 st.markdown("---")
 
 # ---------------------------------------------------------
@@ -220,7 +220,7 @@ for item in tous_agents:
                                 debut_autorise + timedelta(hours=8),
                                 datetime.combine(dt_jour.date(), datetime.max.time()) - timedelta(hours=1)
                             )
-                            creneau_texte = f"De {heure_min_str} à {dt_fin_max.strftime('%H:%M')} (Repos 11h respecté après fin à {derniere_fin_veille.strftime('%H:%M'})"
+                            creneau_texte = f"De {heure_min_str} à {dt_fin_max.strftime('%H:%M')} (Repos 11h respecté après fin à {derniere_fin_veille.strftime('%H:%M')})"
             else:
                 intervalles = info_jour["intervalles"]
                 heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
