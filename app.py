@@ -289,7 +289,7 @@ for item in tous_agents:
                         opportunite = "possibilité de faire travailler l’agent"
                 
                 tableau_resultats.append({
-                    "Contrats": contrat_nom,
+                    "Contrat": contrat_nom,
                     "Agent": agent_nom,
                     "Date": d,
                     "Type d'opportunité": opportunite,
@@ -309,7 +309,7 @@ if tableau_resultats:
                 max_chars=150
             )
         },
-        disabled=["Contrats", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
+        disabled=["Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
         hide_index=True,
     )
     
@@ -319,4 +319,18 @@ if tableau_resultats:
     st.markdown("---")
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.success("✅ Données
+        st.success("✅ Données prêtes à être exportées pour vos justificatifs de planning.")
+    with col2:
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
+        processed_data = output.getvalue()
+        
+        st.download_button(
+            label="📥 Télécharger le rapport (Excel)",
+            data=processed_data,
+            file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+else:
+    st.warning("⚠️ Aucun résultat dans le tableau. Vérifiez vos fichiers PDF importés ou le filtre de semaine dans le menu de gauche.")
