@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🚨 SOS Remplacement - Assistant (Lecture Grille Comète Conforme)")
+st.title("🚨 SOS Remplacement - Assistant (Quotas et Totaux Exacts)")
 st.markdown("---")
 
 # ---------------------------------------------------------
@@ -58,7 +58,7 @@ if erreur:
 semaine_selectionnee = st.sidebar.selectbox("3. Semaine à afficher en priorité", ["S43", "S44", "Les deux"])
 
 # ---------------------------------------------------------
-# 2. ANALYSE ET SYNCHRONISATION EXACTE DES HORAIRES
+# 2. ANALYSE SÉCURISÉE SANS CUMUL ABERRANT
 # ---------------------------------------------------------
 planning_agents = {}
 logs_debug = []
@@ -114,25 +114,25 @@ if fichiers_planning:
                     start_target = start_week1 + timedelta(weeks=num_semaine - 1)
                 
                 jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
-                
-                # Initialisation des structures par jour
                 semaine_agent = {j: {"statut": "REPOS", "intervalles": []} for j in jours_semaine}
                 
-                # Analyse intelligente de toutes les paires d'heures du planning
-                jour_Index = 0
+                # Association d'index par date détectée dans le texte
+                jour_courant_idx = 0
+                
                 for line in lignes_texte:
                     line_upper = line.upper()
                     if "TOTAL" in line_upper or len(line) < 4:
                         continue
                     
-                    # Détection d'une nouvelle colonne/jour via la date ou le libellé si présent
+                    # Détection du jour de la semaine dans la ligne
                     for idx, j_str in enumerate(jours_semaine):
                         dt = datetime.strptime(j_str, '%d/%m/%Y')
                         if dt.strftime('%d/%m') in line or dt.strftime('%d') in line:
-                            jour_Index = idx
+                            jour_courant_idx = idx
                             break
 
                     hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
+                    # Si on trouve une paire d'heures de service valide (ex: 00:00 et 07:40)
                     if len(hours) >= 2:
                         h1, h2 = hours[0], hours[1]
                         try:
@@ -142,25 +142,27 @@ if fichiers_planning:
                             if diff <= 0: diff += 24 * 3600
                             duree = diff / 3600.0
                             
-                            if 2.0 <= duree <= 14.0:
-                                j_cible = jours_semaine[jour_Index]
+                            # Une vacation standard dure entre 1h et 13h max
+                            if 1.0 <= duree <= 13.0:
+                                j_cible = jours_semaine[jour_courant_idx]
                                 dt_deb = datetime.strptime(f"{j_cible} {h1}", '%d/%m/%Y %H:%M')
                                 dt_fin = datetime.strptime(f"{j_cible} {h2}", '%d/%m/%Y %H:%M')
                                 if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
                                 
                                 semaine_agent[j_cible]["statut"] = "TRAVAIL"
+                                # Éviter les doublons exacts sur une même ligne lue plusieurs fois
                                 if (dt_deb, dt_fin) not in semaine_agent[j_cible]["intervalles"]:
                                     semaine_agent[j_cible]["intervalles"].append((dt_deb, dt_fin))
                         except Exception:
                             pass
-                
-                # Forcer le jour sans service en REPOS (ex: le 23/10 sur l'image)
+
+                # Validation finale des statuts de la semaine
                 for j_str in jours_semaine:
                     if not semaine_agent[j_str]["intervalles"]:
                         semaine_agent[j_str]["statut"] = "REPOS"
 
                 planning_agents[agent_name_pdf].update(semaine_agent)
-                logs_debug.append(f"✅ Fichier `{fichier.name}` ({agent_name_pdf}) : Synchronisé conformément au planning visuel.")
+                logs_debug.append(f"✅ Fichier `{fichier.name}` ({agent_name_pdf}) : Extraction propre sans cumul.")
             else:
                 logs_debug.append(f"⚠️ Fichier `{fichier.name}` : Semaine introuvable dans le nom.")
 
@@ -174,7 +176,7 @@ with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
 # ---------------------------------------------------------
 # 3. GÉNÉRATION DU TABLEAU ET CONTRÔLE RÉGLEMENTAIRE STRICT
 # ---------------------------------------------------------
-st.subheader("📋 Liste des Disponibilités & Opportunités (Conforme Planning Visuel)")
+st.subheader("📋 Liste des Disponibilités & Opportunités (Quotas Exacts)")
 
 tableau_resultats = []
 tous_agents = df_agents[["Contrats", "Agent"]].drop_duplicates().to_dict(orient="records")
@@ -222,16 +224,17 @@ for item in tous_agents:
                             creneau_texte = f"De {heure_min_str} à {dt_fin_max.strftime('%H:%M')} (Repos 11h respecté après fin à {derniere_fin_veille.strftime('%H:%M')})"
             else:
                 intervalles = info_jour["intervalles"]
+                # Calcul exact cumulé de toutes les vacations du jour (ex: N01 + J04 si cumulées)
                 heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
                 
                 if heures_faites >= 10.0:
                     creneau_texte = f"Déjà {round(heures_faites, 2)}h faites ce jour (Plafond 10h atteint)"
                     opportunite = "🔴 Complet (10h atteint)"
                 else:
-                    derni_fin = max([iv[1] for iv in intervalles])
-                    heure_debut_str = derni_fin.strftime('%H:%M')
+                    derniere_fin = max([iv[1] for iv in intervalles])
+                    heure_debut_str = derniere_fin.strftime('%H:%M')
                     heures_restantes = max(0.0, 10.0 - heures_faites)
-                    dt_fin_pot = derni_fin + timedelta(hours=heures_restantes)
+                    dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
                     creneau_texte = f"De {heure_debut_str} à {dt_fin_pot.strftime('%H:%M')} ({round(heures_restantes, 2)}h max, déjà {round(heures_faites, 2)}h faites)"
                     opportunite = "🟡 Heures sup / Jour travaillé"
             
