@@ -89,7 +89,6 @@ if fichiers_planning:
     for fichier in fichiers_planning:
         match_semaine = re.search(r'S([0-9]{1,2})', fichier.name.upper())
         
-        # Liste des semaines à traiter pour ce fichier
         semaines_a_traiter = []
         if match_semaine:
             semaines_a_traiter.append(int(match_semaine.group(1)))
@@ -123,7 +122,6 @@ if fichiers_planning:
                 continue
 
             for num_semaine in semaines_a_traiter:
-                # Si l'utilisateur a filtré sur une semaine précise dans la barre latérale, on ignore l'autre
                 if semaine_selectionnee != "Les deux" and f"S{num_semaine}" != semaine_selectionnee:
                     continue
 
@@ -187,7 +185,6 @@ if fichiers_planning:
                 for agent_name_pdf in agents_trouves_dans_pdf:
                     if agent_name_pdf not in planning_agents:
                         planning_agents[agent_name_pdf] = {}
-                    # On fusionne sans écraser si on a plusieurs semaines
                     planning_agents[agent_name_pdf].update(semaine_agent)
                     logs_debug.append(f"✅ Synchro Semaine S{num_semaine} OK pour {agent_name_pdf}")
 
@@ -217,116 +214,4 @@ for item in tous_agents:
             break
     
     if matched_schedule:
-        dates_triees = sorted(matched_schedule.keys(), key=lambda x: datetime.strptime(x, '%d/%m/%Y'))
-        jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
-        
-        if jours_repos_total < 1:
-            st.warning(f"⚠️ **Alerte Réglementaire pour {agent_nom}** : Cet agent n'a aucun jour de repos répertorié cette semaine.")
-
-        for idx_d, d in enumerate(dates_triees):
-            info_jour = matched_schedule[d]
-            statut = info_jour["statut"]
-            dt_jour = datetime.strptime(d, '%d/%m/%Y')
-            
-            if statut == "REPOS":
-                creneau_texte = "Journée complète (00h00 - 24h00)"
-                if jours_repos_total == 1:
-                    creneau_texte += " — seul jour de repos hebdo"
-                opportunite = "🟢 Jour de Repos"
-                
-                if idx_d > 0:
-                    veille_d = dates_triees[idx_d - 1]
-                    info_veille = matched_schedule.get(veille_d, {})
-                    intervalles_veille = info_veille.get("intervalles", [])
-                    if intervalles_veille:
-                        derniere_fin_veille = max([iv[1] for iv in intervalles_veille])
-                        debut_autorise = derniere_fin_veille + timedelta(hours=11)
-                        if debut_autorise.date() == dt_jour.date():
-                            heure_min_str = debut_autorise.strftime('%H:%M')
-                            dt_fin_max = min(debut_autorise + timedelta(hours=8), datetime.combine(dt_jour.date(), datetime.max.time()) - timedelta(hours=1))
-                            creneau_texte = f"De {heure_min_str} à {dt_fin_max.strftime('%H:%M')} (Repos 11h respecté)"
-            else:
-                intervalles = info_jour["intervalles"]
-                heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
-                
-                if heures_faites >= 10.0:
-                    h_faites_fmt = decimal_to_hm(heures_faites)
-                    creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
-                    opportunite = "🔴 Complet (10h atteint)"
-                else:
-                    derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
-                    heure_debut_str = derniere_fin.strftime('%H:%M')
-                    heures_restantes = max(0.0, 10.0 - heures_faites)
-                    
-                    limite_fin_str = ""
-                    if idx_d + 1 < len(dates_triees):
-                        info_lendemain = matched_schedule.get(dates_triees[idx_d + 1], {})
-                        intervalles_lendemain = info_lendemain.get("intervalles", [])
-                        if intervalles_lendemain:
-                            premiere_debut_lendemain = min([iv[0] for iv in intervalles_lendemain])
-                            max_fin_par_repos = premiere_debut_lendemain - timedelta(hours=11)
-                            dt_fin_pot_10h = derniere_fin + timedelta(hours=heures_restantes)
-                            dt_fin_pot = min(dt_fin_pot_10h, max_fin_par_repos)
-                            if dt_fin_pot > derniere_fin:
-                                heures_restantes = (dt_fin_pot - derniere_fin).total_seconds() / 3600.0
-                                limite_fin_str = dt_fin_pot.strftime('%H:%M')
-                            else:
-                                heures_restantes = 0.0
-                                limite_fin_str = heure_debut_str
-                        else:
-                            dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
-                            limite_fin_str = dt_fin_pot.strftime('%H:%M')
-                    else:
-                        dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
-                        limite_fin_str = dt_fin_pot.strftime('%H:%M')
-
-                    duree_fmt = decimal_to_hm(heures_restantes)
-                    creneau_texte = f"{duree_fmt} max ce jour (possibilité de placer sur un autre créneau libre dans le respect des 11h de repos)"
-                    opportunite = "possibilité de faire travailler l’agent"
-            
-            tableau_resultats.append({
-                "Contrats": contrat_nom,
-                "Agent": agent_nom,
-                "Date": d,
-                "Type d'opportunité": opportunite,
-                "Créneau horaire / Heures possibles": creneau_texte,
-                "Dernier recours": ""
-            })
-
-if tableau_resultats:
-    df_table = pd.DataFrame(tableau_resultats)
-
-    edited_df = st.data_editor(
-        df_table,
-        column_config={
-            "Dernier recours": st.column_config.TextColumn(
-                "Dernier recours (Saisie quotidienne)",
-                help="Saisir manuellement des notes ou commentaires",
-                max_chars=150
-            )
-        },
-        disabled=["Contrats", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
-        hide_index=True,
-    )
-    
-    # ---------------------------------------------------------
-    # BOUTON D'EXPORT EXCEL OFFICIEL
-    # ---------------------------------------------------------
-    st.markdown("---")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.success("✅ Données prêtes à être exportées pour vos justificatifs de planning.")
-    with col2:
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
-        processed_data = output.getvalue()
-        
-        st.download_button(
-            label="📥 Télécharger le rapport (Excel)",
-            data=processed_data,
-            file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-else:
-    st.warning("⚠️ Aucun résultat dans le tableau. Vérifiez vos fichiers PDF importés ou le filtre de semaine dans le menu de gauche.")
+        dates_triees = sorted(matched_schedule.keys(), key=lambda x: datetime.strptime
