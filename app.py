@@ -227,4 +227,3 @@ for item in tous_agents:
             info_jour = matched_schedule[d]
             statut = info_jour["statut"]
             dt_jour = datetime.strptime(d, '%d/%m/%Y')
-        
