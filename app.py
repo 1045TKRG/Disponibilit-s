@@ -229,45 +229,22 @@ for item in tous_agents:
                                 datetime.combine(dt_jour.date(), datetime.max.time()) - timedelta(hours=1)
                             )
                             creneau_texte = f"De {heure_min_str} à {dt_fin_max.strftime('%H:%M')} (Repos 11h respecté après fin à {derniere_fin_veille.strftime('%H:%M')})"
-            else:
+           else:
                 intervalles = info_jour["intervalles"]
+                # Calcul exact cumulé de toutes les vacations du jour
                 heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
                 
-                # Vérification stricte du plafond de 10h journalier
+                # Si le cumul dépasse ou atteint 10h
                 if heures_faites >= 10.0:
                     creneau_texte = f"Déjà {round(heures_faites, 2)}h faites ce jour (Plafond 10h atteint)"
                     opportunite = "🔴 Complet (10h atteint)"
                 else:
-                    derniere_fin = max([iv[1] for iv in intervalles])
+                    # On prend la fin de la dernière vacation réelle du jour
+                    derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
                     heure_debut_str = derniere_fin.strftime('%H:%M')
+                    
                     heures_restantes = max(0.0, 10.0 - heures_faites)
                     dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
+                    
                     creneau_texte = f"De {heure_debut_str} à {dt_fin_pot.strftime('%H:%M')} ({round(heures_restantes, 2)}h max, déjà {round(heures_faites, 2)}h faites)"
                     opportunite = "🟡 Heures sup / Jour travaillé"
-            
-            tableau_resultats.append({
-                "Contrats": contrat_nom,
-                "Agent": agent_nom,
-                "Date": d,
-                "Type d'opportunité": opportunite,
-                "Créneau horaire / Heures possibles": creneau_texte,
-                "Dernier recours": ""
-            })
-
-if tableau_resultats:
-    df_table = pd.DataFrame(tableau_resultats)
-    st.data_editor(
-        df_table,
-        column_config={
-            "Dernier recours": st.column_config.TextColumn(
-                "Dernier recours (Saisie quotidienne)",
-                help="Saisir manuellement des notes",
-                max_chars=150
-            )
-        },
-        disabled=["Contrats", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
-        hide_index=True,
-    )
-    st.success("✅ Tableau affiché avec succès !")
-else:
-    st.warning("⚠️ Aucun résultat dans le tableau. Vérifiez vos fichiers PDF importés.")
