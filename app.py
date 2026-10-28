@@ -190,7 +190,7 @@ with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
 # ---------------------------------------------------------
 # 3. GÉNÉRATION DU TABLEAU ET CONTRÔLE RÉGLEMENTAIRE STRICT
 # ---------------------------------------------------------
-st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Rigoureux & Traçable)")
+st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Rigoureux)")
 
 tableau_resultats = []
 tous_agents = df_agents[["Contrats", "Agent"]].drop_duplicates().to_dict(orient="records")
@@ -236,97 +236,4 @@ for item in tous_agents:
                                 debut_autorise + timedelta(hours=8),
                                 datetime.combine(dt_jour.date(), datetime.max.time()) - timedelta(hours=1)
                             )
-                            creneau_texte = f"De {heure_min_str} à {dt_fin_max.strftime('%H:%M')} (Repos 11h respecté après fin à {derniere_fin_veille.strftime('%H:%M')})"
-            else:
-                intervalles = info_jour["intervalles"]
-                heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
-                
-                if heures_faites >= 10.0:
-                    creneau_texte = f"Déjà {decimal_to_hm(heures_faites)} faites ce jour (Plafond 10h atteint)"
-                    opportunite = "🔴 Complet (10h atteint)"
-                else:
-                    derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
-                    heure_debut_str = derniere_fin.strftime('%H:%M')
-                    heures_restantes = max(0.0, 10.0 - heures_faites)
-                    
-                    limite_fin_str = ""
-                    if idx_d + 1 < len(dates_triees):
-                        info_lendemain = matched_schedule.get(dates_triees[idx_d + 1], {})
-                        intervalles_lendemain = info_lendemain.get("intervalles", [])
-                        if intervalles_lendemain:
-                            premiere_debut_lendemain = min([iv[0] for iv in intervalles_lendemain])
-                            max_fin_par_repos = premiere_debut_lendemain - timedelta(hours=11)
-                            dt_fin_pot_10h = derniere_fin + timedelta(hours=heures_restantes)
-                            dt_fin_pot = min(dt_fin_pot_10h, max_fin_par_repos)
-                            if dt_fin_pot > derniere_fin:
-                                heures_restantes = (dt_fin_pot - derniere_fin).total_seconds() / 3600.0
-                                limite_fin_str = dt_fin_pot.strftime('%H:%M')
-                            else:
-                                heures_restantes = 0.0
-                                limite_fin_str = heure_debut_str
-                        else:
-                            dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
-                            limite_fin_str = dt_fin_pot.strftime('%H:%M')
-                    else:
-                        dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
-                        limite_fin_str = dt_fin_pot.strftime('%H:%M')
-
-                    duree_fmt = decimal_to_hm(heures_restantes)
-                    creneau_texte = f"{duree_fmt} max ce jour à compter de {heure_debut_str} à {limite_fin_str}"
-                    opportunite = "possibilité de faire travailler l’agent"
-            
-            tableau_resultats.append({
-                "Contrats": contrat_nom,
-                "Agent": agent_nom,
-                "Date": d,
-                "Type d'opportunité": opportunite,
-                "Créneau horaire / Heures possibles": creneau_texte,
-                "Statut / Suivi superviseur": "À proposer",
-                "Motif de refus / Notes": ""
-            })
-
-if tableau_resultats:
-    df_table = pd.DataFrame(tableau_resultats)
-    
-    st.info("💡 **Conseil Traçabilité** : Utilisez la colonne *Statut / Suivi superviseur* pour noter si un agent a été proposé ou refusé par la hiérarchie. Cela vous servira de journal officiel en cas de contestation.")
-
-    edited_df = st.data_editor(
-        df_table,
-        column_config={
-            "Statut / Suivi superviseur": st.column_config.SelectboxColumn(
-                "Statut / Suivi superviseur",
-                help="Suivez l'état des propositions auprès de la hiérarchie",
-                options=["À proposer", "Proposé - En attente", "Validé / Retenu", "Refusé par superviseur"],
-                required=True,
-            ),
-            "Motif de refus / Notes": st.column_config.TextColumn(
-                "Motif de refus / Notes",
-                help="Notez ici les raisons invoquées en cas de blocage par la hiérarchie",
-                max_chars=150
-            )
-        },
-        disabled=["Contrats", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
-        hide_index=True,
-    )
-    
-    # ---------------------------------------------------------
-    # BOUTON D'EXPORT EXCEL OFFICIEL
-    # ---------------------------------------------------------
-    st.markdown("---")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.success("✅ Données prêtes à être partagées ou exportées pour justifier vos choix de planning.")
-    with col2:
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
-        processed_data = output.getvalue()
-        
-        st.download_button(
-            label="📥 Télécharger le rapport (Excel)",
-            data=processed_data,
-            file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-else:
-    st.warning("⚠️ Aucun résultat dans le tableau. Vérifiez vos fichiers PDF importés.")
+                            creneau_texte = f"De {heure_min_str} à
