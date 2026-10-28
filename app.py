@@ -88,9 +88,6 @@ if fichiers_planning:
 
         try:
             reader = pypdf.PdfReader(fichier)
-            
-            # On découpe le PDF par page ou on extrait tout en gardant les blocs par agent si possible
-            # Ici, on extrait l'ensemble des lignes du PDF globalement
             lignes_texte = []
             for page in reader.pages:
                 t = page.extract_text(extraction_mode="layout") or page.extract_text()
@@ -103,7 +100,6 @@ if fichiers_planning:
             texte_global = "\n".join(lignes_texte)
             text_upper = texte_global.upper()
             
-            # CORRECTION : On cherche TOUS les agents du référentiel présents dans ce fichier PDF
             agents_trouves_dans_pdf = []
             for ex_agent in df_agents["Agent"].unique():
                 if ex_agent.upper() in text_upper:
@@ -185,62 +181,4 @@ if fichiers_planning:
                     logs_debug.append(f"⚠️ Fichier `{fichier.name}` : Semaine introuvable dans le nom.")
 
         except Exception as e:
-            logs_debug.append(f"⚠️ Erreur lecture `{fichier.name}` : {e}")
-
-with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
-    for log in logs_debug:
-        st.write(log)
-
-# ---------------------------------------------------------
-# 3. GÉNÉRATION DU TABLEAU ET CONTRÔLE RÉGLEMENTAIRE STRICT
-# ---------------------------------------------------------
-st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Rigoureux)")
-
-tableau_resultats = []
-tous_agents = df_agents[["Contrats", "Agent"]].drop_duplicates().to_dict(orient="records")
-
-for item in tous_agents:
-    contrat_nom = item["Contrats"]
-    agent_nom = item["Agent"]
-    
-    matched_schedule = {}
-    for pdf_name, schedule_dict in planning_agents.items():
-        if noms_sont_compatibles(agent_nom, pdf_name):
-            matched_schedule.update(schedule_dict)
-            break
-    
-    if matched_schedule:
-        dates_triees = sorted(matched_schedule.keys(), key=lambda x: datetime.strptime(x, '%d/%m/%Y'))
-        jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
-        
-        if jours_repos_total < 1:
-            st.warning(f"⚠️ **Alerte Réglementaire pour {agent_nom}** : Cet agent n'a aucun jour de repos répertorié cette semaine.")
-
-        for idx_d, d in enumerate(dates_triees):
-            info_jour = matched_schedule[d]
-            statut = info_jour["statut"]
-            dt_jour = datetime.strptime(d, '%d/%m/%Y')
-            
-            if statut == "REPOS":
-                creneau_texte = "Journée complète (00h00 - 24h00)"
-                if jours_repos_total == 1:
-                    creneau_texte += " — seul jour de repos hebdo"
-                opportunite = "🟢 Jour de Repos"
-                
-                if idx_d > 0:
-                    veille_d = dates_triees[idx_d - 1]
-                    info_veille = matched_schedule.get(veille_d, {})
-                    intervalles_veille = info_veille.get("intervalles", [])
-                    if intervalles_veille:
-                        derniere_fin_veille = max([iv[1] for iv in intervalles_veille])
-                        debut_autorise = derniere_fin_veille + timedelta(hours=11)
-                        if debut_autorise.date() == dt_jour.date():
-                            heure_min_str = debut_autorise.strftime('%H:%M')
-                            dt_fin_max = min(debut_autorise + timedelta(hours=8), datetime.combine(dt_jour.date(), datetime.max.time()) - timedelta(hours=1))
-                            creneau_texte = f"De {heure_min_str} à {dt_fin_max.strftime('%H:%M')} (Repos 11h respecté après fin à {derniere_fin_veille.strftime('%H:%M')})"
-            else:
-                intervalles = info_jour["intervalles"]
-                heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
-                
-                if heures_faites >= 10.0:
-                    creneau_texte = f"
+            logs_debug.append(f"⚠️ Er
