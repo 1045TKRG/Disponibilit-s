@@ -60,66 +60,15 @@ semaine_selectionnee = st.sidebar.selectbox("3. Semaine à afficher en priorité
 # ---------------------------------------------------------
 # 2. ANALYSE CHRONOLOGIQUE ET INDEXATION PAR DATE EXACTE
 # ---------------------------------------------------------
-planning_agents = {}
-logs_debug = []
-
-def noms_sont_compatibles(excel_name, pdf_name):
-    e_words = set(excel_name.upper().split())
-    p_words = set(pdf_name.upper().split())
-    return len(e_words.intersection(p_words)) >= min(len(e_words), len(p_words))
-
-if fichiers_planning:
-    for fichier in fichiers_planning:
-        match_semaine = re.search(r'S([0-9]{1,2})', fichier.name.upper())
-        num_sem_file = f"S{match_semaine.group(1)}" if match_semaine else ""
-        
-        if semaine_selectionnee != "Les deux" and num_sem_file and num_sem_file != semaine_selectionnee:
-            continue
-
-        try:
-            reader = pypdf.PdfReader(fichier)
-            lignes_texte = []
-            for page in reader.pages:
-                t = page.extract_text(extraction_mode="layout") or page.extract_text()
-                if t:
-                    for l in t.split('\n'):
-                        l_clean = l.strip()
-                        if l_clean:
-                            lignes_texte.append(l_clean)
-            
-            texte_global = "\n".join(lignes_texte)
-            text_upper = texte_global.upper()
-            
-            agent_name_pdf = None
-            for ex_agent in df_agents["Agent"].unique():
-                if ex_agent.upper() in text_upper:
-                    agent_name_pdf = ex_agent.upper()
-                    break
-            
-            if not agent_name_pdf:
-                logs_debug.append(f"❌ Fichier `{fichier.name}` : Aucun agent du référentiel trouvé.")
-                continue
-            
-            if agent_name_pdf not in planning_agents:
-                planning_agents[agent_name_pdf] = {}
-
-            if match_semaine:
-                num_semaine = int(match_semaine.group(1))
-                annee_ref = 2026
-                try:
-                    start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
-                except Exception:
-                    jan4 = datetime(annee_ref, 1, 4)
-                    start_week1 = jan4 - timedelta(days=jan4.weekday())
-                    start_target = start_week1 + timedelta(weeks=num_semaine - 1)
-                
-                jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
+# Initialisation propre des 7 jours de la semaine
+                jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y'] for i in range(7)]
                 semaine_agent = {j: {"statut": "REPOS", "intervalles": []} for j in jours_semaine}
                 
-                # Collecte de toutes les vacations uniques du fichier
-                services_bruts = []
-                seen_signatures = set()
+                # Dictionnaire de correspondance par nom du jour ou index
+                # Sur les plannings Comète, les données s'alignent généralement par colonnes (de Lun à Dim)
+                # Nous allons extraire les blocs horaires et les trier par heure de début chronologique réelle
                 
+                services_tries = []
                 for line in lignes_texte:
                     if "TOTAL" in line.upper() or len(line) < 4:
                         continue
@@ -127,30 +76,42 @@ if fichiers_planning:
                     hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
                     if len(hours) >= 2:
                         h1, h2 = hours[0], hours[1]
-                        sig = f"{h1}-{h2}"
-                        if sig not in seen_signatures:
-                            try:
-                                t1 = datetime.strptime(h1, '%H:%M')
-                                t2 = datetime.strptime(h2, '%H:%M')
-                                diff = (t2 - t1).total_seconds()
-                                if diff <= 0: diff += 24 * 3600
-                                duree = diff / 3600.0
-                                
-                                if 1.0 <= duree <= 14.0:
-                                    seen_signatures.add(sig)
-                                    services_bruts.append((h1, h2))
-                            except Exception:
-                                pass
+                        try:
+                            t1 = datetime.strptime(h1, '%H:%M')
+                            t2 = datetime.strptime(h2, '%H:%M')
+                            diff = (t2 - t1).total_seconds()
+                            if diff <= 0: diff += 24 * 3600
+                            duree = diff / 3600.0
+                            
+                            if 1.0 <= duree <= 14.0:
+                                # On stocke avec l'objet temps pour pouvoir les trier par ordre chronologique de la semaine
+                                services_tries.append((t1, h1, h2, duree))
+                        except Exception:
+                            pass
 
-                # S'il y a exactement 6 services dans la semaine (par exemple pour S43 : Lun, Mar, Mer, Jeu, Sam, Dim),
-                # on les associe jour par jour en sautant le jour de repos (ex: Vendredi, index 4).
+                # Tri des services par ordre chronologique d'apparition dans la journée (de 00:00 vers 23:59)
+                # Cela évite que des services de fin de journée se retrouvent au mauvais jour
+                services_tries.sort(key=lambda x: x[0])
+
+                # Pour éviter les doublons de lignes multiples d'un même contrat
+                services_uniques = []
+                seen_intervalles = set()
+                for s in services_tries:
+                    sig = f"{s[1]}-{s[2]}"
+                    if sig not in seen_intervalles:
+                        seen_intervalles.add(sig)
+                        services_uniques.append((s[1], s[2]))
+
+                # Attribution séquentielle aux jours travaillés de la semaine (en sautant les repos identifiés)
+                # S43 Monique : Lun, Mar, Mer, Jeu travaillés, Vendredi repos, Samedi, Dimanche travaillés
                 service_idx = 0
                 for idx, j_target in enumerate(jours_semaine):
-                    if idx == 4: # Jour de repos fixe (ex: Vendredi)
+                    # Index 4 = Vendredi (jour de repos type sur votre exemple)
+                    if idx == 4:
                         semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
                     else:
-                        if service_idx < len(services_bruts):
-                            h1, h2 = services_bruts[service_idx]
+                        if service_idx < len(services_uniques):
+                            h1, h2 = services_uniques[service_idx]
                             dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
                             dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
                             if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
@@ -164,16 +125,6 @@ if fichiers_planning:
                             semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
 
                 planning_agents[agent_name_pdf].update(semaine_agent)
-                logs_debug.append(f"✅ Fichier `{fichier.name}` ({agent_name_pdf}) : Synchronisation chronologique appliquée.")
-            else:
-                logs_debug.append(f"⚠️ Fichier `{fichier.name}` : Semaine introuvable dans le nom.")
-
-        except Exception as e:
-            logs_debug.append(f"⚠️ Erreur lecture `{fichier.name}` : {e}")
-
-with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
-    for log in logs_debug:
-        st.write(log)
 
 # ---------------------------------------------------------
 # 3. GÉNÉRATION DU TABLEAU ET CONTRÔLE RÉGLEMENTAIRE STRICT
