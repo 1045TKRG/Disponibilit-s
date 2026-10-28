@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🚨 SOS Remplacement - Assistant (Correction de Syntaxe Finale)")
+st.title("🚨 SOS Remplacement - Assistant (Conformité & Quotas Stricts)")
 st.markdown("---")
 
 # ---------------------------------------------------------
@@ -58,7 +58,7 @@ if erreur:
 semaine_selectionnee = st.sidebar.selectbox("3. Semaine à afficher en priorité", ["S43", "S44", "Les deux"])
 
 # ---------------------------------------------------------
-# 2. ANALYSE ET CALAGE CALENDAIRE EXACT
+# 2. ANALYSE ET CONTRÔLE RÉGLEMENTAIRE INTACT
 # ---------------------------------------------------------
 planning_agents = {}
 logs_debug = []
@@ -143,7 +143,7 @@ if fichiers_planning:
                 semaine_agent = {}
                 service_idx = 0
                 for idx, j_target in enumerate(jours_semaine):
-                    if idx in [4, 6]: 
+                    if idx in [4, 6]: # Repos par défaut (ex: Vendredi / Dimanche)
                         semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
                     else:
                         if service_idx < len(services_trouves):
@@ -173,9 +173,9 @@ with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
         st.write(log)
 
 # ---------------------------------------------------------
-# 3. GÉNÉRATION DU TABLEAU ET CONTRÔLE RÉGLEMENTAIRE
+# 3. GÉNÉRATION DU TABLEAU ET CONTRÔLE RÉGLEMENTAIRE STRICT
 # ---------------------------------------------------------
-st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Réglementaire)")
+st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Réglementaire Strict)")
 
 tableau_resultats = []
 tous_agents = df_agents[["Contrats", "Agent"]].drop_duplicates().to_dict(orient="records")
@@ -225,8 +225,9 @@ for item in tous_agents:
                 intervalles = info_jour["intervalles"]
                 heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
                 
+                # Règle de verrouillage stricte du quota max journalier (10h)
                 if heures_faites >= 10.0:
-                    creneau_texte = f"Déjà {round(heures_faites, 2)}h faites ce jour (Complet)"
+                    creneau_texte = f"Déjà {round(heures_faites, 2)}h faites ce jour (Plafond 10h atteint)"
                     opportunite = "🔴 Complet (10h atteint)"
                 else:
                     derniere_fin = max([iv[1] for iv in intervalles])
