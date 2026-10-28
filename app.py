@@ -158,7 +158,7 @@ if fichiers_planning:
 
                     service_idx = 0
                     for idx, j_target in enumerate(jours_semaine):
-                        if idx == 4: # Vendredi repos type
+                        if idx == 4:
                             semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
                         else:
                             if service_idx < len(services_uniques):
@@ -167,4 +167,52 @@ if fichiers_planning:
                                 dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
                                 if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
                                 
-                                semaine_agent[j_target] = {
+                                semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
+                                service_idx += 1
+                            else:
+                                semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
+
+                    planning_agents[agent_name_pdf].update(semaine_agent)
+                    logs_debug.append(f"✅ Synchro OK pour {agent_name_pdf}")
+                else:
+                    logs_debug.append("⚠️ Semaine introuvable.")
+
+        except Exception as e:
+            logs_debug.append("⚠️ Erreur de lecture.")
+
+with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
+    for log in logs_debug:
+        st.write(log)
+
+# ---------------------------------------------------------
+# 3. GÉNÉRATION DU TABLEAU ET CONTRÔLE RÉGLEMENTAIRE STRICT
+# ---------------------------------------------------------
+st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Rigoureux)")
+
+tableau_resultats = []
+tous_agents = df_agents[["Contrats", "Agent"]].drop_duplicates().to_dict(orient="records")
+
+for item in tous_agents:
+    contrat_nom = item["Contrats"]
+    agent_nom = item["Agent"]
+    
+    matched_schedule = {}
+    for pdf_name, schedule_dict in planning_agents.items():
+        if noms_sont_compatibles(agent_nom, pdf_name):
+            matched_schedule.update(schedule_dict)
+            break
+    
+    if matched_schedule:
+        dates_triees = sorted(matched_schedule.keys(), key=lambda x: datetime.strptime(x, '%d/%m/%Y'))
+        jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
+        
+        if jours_repos_total < 1:
+            st.warning(f"⚠️ **Alerte Réglementaire pour {agent_nom}** : Cet agent n'a aucun jour de repos répertorié cette semaine.")
+
+        for idx_d, d in enumerate(dates_triees):
+            info_jour = matched_schedule[d]
+            statut = info_jour["statut"]
+            dt_jour = datetime.strptime(d, '%d/%m/%Y')
+            
+            if statut == "REPOS":
+                creneau_texte = "Journée complète (
