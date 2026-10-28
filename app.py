@@ -232,8 +232,4 @@ for item in tous_agents:
                         debut_autorise = derniere_fin_veille + timedelta(hours=11)
                         if debut_autorise.date() == dt_jour.date():
                             heure_min_str = debut_autorise.strftime('%H:%M')
-                            dt_fin_max = min(
-                                debut_autorise + timedelta(hours=8),
-                                datetime.combine(dt_jour.date(), datetime.max.time()) - timedelta(hours=1)
-                            )
-                            creneau_texte = f"De {heure_min_str} à
+                            dt_fin_max = min(debut_autorise + timedelta(hours=8), datetime.combine(dt_jour.
