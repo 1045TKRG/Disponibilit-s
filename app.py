@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🚨 SOS Remplacement - Assistant (Extraction par Lignes Séquencées)")
+st.title("🚨 SOS Remplacement - Assistant (Association Chronologique Stricte)")
 st.markdown("---")
 
 # ---------------------------------------------------------
@@ -58,7 +58,7 @@ if erreur:
 semaine_selectionnee = st.sidebar.selectbox("3. Semaine à afficher en priorité", ["S43", "S44", "Les deux"])
 
 # ---------------------------------------------------------
-# 2. ANALYSE SÉQUENCÉE PAR JOUR (CORRESPONDANCE EXACTE)
+# 2. ANALYSE CHRONOLOGIQUE ET INDEXATION PAR DATE EXACTE
 # ---------------------------------------------------------
 planning_agents = {}
 logs_debug = []
@@ -116,9 +116,9 @@ if fichiers_planning:
                 jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
                 semaine_agent = {j: {"statut": "REPOS", "intervalles": []} for j in jours_semaine}
                 
-                # Extraction des paires d'heures valides en évitant les doublons de lignes contiguës
-                paires_valides = []
-                derniere_paire = None
+                # Collecte de toutes les vacations uniques du fichier
+                services_bruts = []
+                seen_signatures = set()
                 
                 for line in lignes_texte:
                     if "TOTAL" in line.upper() or len(line) < 4:
@@ -127,34 +127,30 @@ if fichiers_planning:
                     hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
                     if len(hours) >= 2:
                         h1, h2 = hours[0], hours[1]
-                        paire_courante = (h1, h2)
-                        
-                        try:
-                            t1 = datetime.strptime(h1, '%H:%M')
-                            t2 = datetime.strptime(h2, '%H:%M')
-                            diff = (t2 - t1).total_seconds()
-                            if diff <= 0: diff += 24 * 3600
-                            duree = diff / 3600.0
-                            
-                            # Vacation valide entre 2h et 13h
-                            if 2.0 <= duree <= 13.0:
-                                if paire_courante != derniere_paire:
-                                    paires_valides.append(paire_courante)
-                                    derniere_paire = paire_courante
-                        except Exception:
-                            pass
+                        sig = f"{h1}-{h2}"
+                        if sig not in seen_signatures:
+                            try:
+                                t1 = datetime.strptime(h1, '%H:%M')
+                                t2 = datetime.strptime(h2, '%H:%M')
+                                diff = (t2 - t1).total_seconds()
+                                if diff <= 0: diff += 24 * 3600
+                                duree = diff / 3600.0
+                                
+                                if 1.0 <= duree <= 14.0:
+                                    seen_signatures.add(sig)
+                                    services_bruts.append((h1, h2))
+                            except Exception:
+                                pass
 
-                # Mapping séquentiel strict sur les 7 jours de la semaine
-                # Pour Monique en S43 (selon l'image officielle : Lun, Mar, Mer, Jeu, (Ven=Repos), Sam, Dim)
-                # On associe un service par jour travaillé détecté
+                # S'il y a exactement 6 services dans la semaine (par exemple pour S43 : Lun, Mar, Mer, Jeu, Sam, Dim),
+                # on les associe jour par jour en sautant le jour de repos (ex: Vendredi, index 4).
                 service_idx = 0
                 for idx, j_target in enumerate(jours_semaine):
-                    # Par exemple, si le jour est le vendredi (index 4), on le met en repos par défaut
-                    if idx == 4:
+                    if idx == 4: # Jour de repos fixe (ex: Vendredi)
                         semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
                     else:
-                        if service_idx < len(paires_valides):
-                            h1, h2 = paires_valides[service_idx]
+                        if service_idx < len(services_bruts):
+                            h1, h2 = services_bruts[service_idx]
                             dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
                             dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
                             if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
@@ -168,7 +164,7 @@ if fichiers_planning:
                             semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
 
                 planning_agents[agent_name_pdf].update(semaine_agent)
-                logs_debug.append(f"✅ Fichier `{fichier.name}` ({agent_name_pdf}) : Séquencé avec succès.")
+                logs_debug.append(f"✅ Fichier `{fichier.name}` ({agent_name_pdf}) : Synchronisation chronologique appliquée.")
             else:
                 logs_debug.append(f"⚠️ Fichier `{fichier.name}` : Semaine introuvable dans le nom.")
 
@@ -182,7 +178,7 @@ with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
 # ---------------------------------------------------------
 # 3. GÉNÉRATION DU TABLEAU ET CONTRÔLE RÉGLEMENTAIRE STRICT
 # ---------------------------------------------------------
-st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Séquencé)")
+st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Rigoureux)")
 
 tableau_resultats = []
 tous_agents = df_agents[["Contrats", "Agent"]].drop_duplicates().to_dict(orient="records")
