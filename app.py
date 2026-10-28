@@ -187,4 +187,53 @@ if fichiers_planning:
         except Exception as e:
             logs_debug.append("⚠️ Erreur de lecture.")
 
-with st.expander("🔍 Journal de diagnostic des PDF", expanded=False
+with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
+    for log in logs_debug:
+        st.write(log)
+
+# ---------------------------------------------------------
+# 3. GÉNÉRATION DU TABLEAU ET CONTRÔLE RÉGLEMENTAIRE STRICT
+# ---------------------------------------------------------
+st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Rigoureux)")
+
+tableau_resultats = []
+tous_agents = df_agents[["Contrats", "Agent"]].drop_duplicates().to_dict(orient="records")
+
+for item in tous_agents:
+    contrat_nom = item["Contrats"]
+    agent_nom = item["Agent"]
+    
+    matched_schedule = {}
+    for pdf_name, schedule_dict in planning_agents.items():
+        if noms_sont_compatibles(agent_nom, pdf_name):
+            matched_schedule.update(schedule_dict)
+            break
+    
+    if matched_schedule:
+        dates_triees = sorted(matched_schedule.keys(), key=lambda x: datetime.strptime(x, '%d/%m/%Y'))
+        jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
+        
+        if jours_repos_total < 1:
+            st.warning(f"⚠️ **Alerte Réglementaire pour {agent_nom}** : Cet agent n'a aucun jour de repos répertorié cette semaine.")
+
+        for idx_d, d in enumerate(dates_triees):
+            info_jour = matched_schedule[d]
+            statut = info_jour["statut"]
+            dt_jour = datetime.strptime(d, '%d/%m/%Y')
+            
+            if statut == "REPOS":
+                creneau_texte = "Journée complète (00h00 - 24h00)"
+                if jours_repos_total == 1:
+                    creneau_texte += " — seul jour de repos hebdo"
+                opportunite = "🟢 Jour de Repos"
+                
+                if idx_d > 0:
+                    veille_d = dates_triees[idx_d - 1]
+                    info_veille = matched_schedule.get(veille_d, {})
+                    intervalles_veille = info_veille.get("intervalles", [])
+                    if intervalles_veille:
+                        derniere_fin_veille = max([iv[1] for iv in intervalles_veille])
+                        debut_autorise = derniere_fin_veille + timedelta(hours=11)
+                        if debut_autorise.date() == dt_jour.date():
+                            heure_min_str = debut_autorise.strftime('%H:%M')
+                            dt_
