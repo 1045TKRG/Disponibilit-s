@@ -89,12 +89,15 @@ if fichiers_planning:
     for fichier in fichiers_planning:
         match_semaine = re.search(r'S([0-9]{1,2})', fichier.name.upper())
         
+        # Liste des semaines à traiter pour ce fichier
+        semaines_a_traiter = []
         if match_semaine:
-            num_semaine = int(match_semaine.group(1))
-        elif semaine_selectionnee != "Les deux":
-            num_semaine = int(semaine_selectionnee.replace('S', ''))
+            semaines_a_traiter.append(int(match_semaine.group(1)))
         else:
-            num_semaine = 43
+            if semaine_selectionnee != "Les deux":
+                semaines_a_traiter.append(int(semaine_selectionnee.replace('S', '')))
+            else:
+                semaines_a_traiter = [43, 44]
 
         try:
             reader = pypdf.PdfReader(fichier)
@@ -119,68 +122,74 @@ if fichiers_planning:
                 logs_debug.append(f"❌ `{fichier.name}` : Aucun agent trouvé.")
                 continue
 
-            annee_ref = 2026
-            try:
-                start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
-            except Exception:
-                jan4 = datetime(annee_ref, 1, 4)
-                start_week1 = jan4 - timedelta(days=jan4.weekday())
-                start_target = start_week1 + timedelta(weeks=num_semaine - 1)
-            
-            jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
-            
-            services_tries = []
-            for line in lignes_texte:
-                if "TOTAL" in line.upper() or len(line) < 4:
+            for num_semaine in semaines_a_traiter:
+                # Si l'utilisateur a filtré sur une semaine précise dans la barre latérale, on ignore l'autre
+                if semaine_selectionnee != "Les deux" and f"S{num_semaine}" != semaine_selectionnee:
                     continue
+
+                annee_ref = 2026
+                try:
+                    start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
+                except Exception:
+                    jan4 = datetime(annee_ref, 1, 4)
+                    start_week1 = jan4 - timedelta(days=jan4.weekday())
+                    start_target = start_week1 + timedelta(weeks=num_semaine - 1)
                 
-                hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
-                if len(hours) >= 2:
-                    h1, h2 = hours[0], hours[1]
-                    try:
-                        t1 = datetime.strptime(h1, '%H:%M')
-                        t2 = datetime.strptime(h2, '%H:%M')
-                        diff = (t2 - t1).total_seconds()
-                        if diff <= 0: diff += 24 * 3600
-                        duree = diff / 3600.0
-                        
-                        if 1.0 <= duree <= 14.0:
-                            services_tries.append((t1, h1, h2, duree))
-                    except Exception:
-                        pass
+                jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
+                
+                services_tries = []
+                for line in lignes_texte:
+                    if "TOTAL" in line.upper() or len(line) < 4:
+                        continue
+                    
+                    hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
+                    if len(hours) >= 2:
+                        h1, h2 = hours[0], hours[1]
+                        try:
+                            t1 = datetime.strptime(h1, '%H:%M')
+                            t2 = datetime.strptime(h2, '%H:%M')
+                            diff = (t2 - t1).total_seconds()
+                            if diff <= 0: diff += 24 * 3600
+                            duree = diff / 3600.0
+                            
+                            if 1.0 <= duree <= 14.0:
+                                services_tries.append((t1, h1, h2, duree))
+                        except Exception:
+                            pass
 
-            services_tries.sort(key=lambda x: x[0])
+                services_tries.sort(key=lambda x: x[0])
 
-            services_uniques = []
-            seen_intervalles = set()
-            for s in services_tries:
-                sig = f"{s[1]}-{s[2]}"
-                if sig not in seen_intervalles:
-                    seen_intervalles.add(sig)
-                    services_uniques.append((s[1], s[2]))
+                services_uniques = []
+                seen_intervalles = set()
+                for s in services_tries:
+                    sig = f"{s[1]}-{s[2]}"
+                    if sig not in seen_intervalles:
+                        seen_intervalles.add(sig)
+                        services_uniques.append((s[1], s[2]))
 
-            semaine_agent = {}
-            service_idx = 0
-            for idx, j_target in enumerate(jours_semaine):
-                if idx == 4:
-                    semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
-                else:
-                    if service_idx < len(services_uniques):
-                        h1, h2 = services_uniques[service_idx]
-                        dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
-                        dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
-                        if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
-                        
-                        semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
-                        service_idx += 1
-                    else:
+                semaine_agent = {}
+                service_idx = 0
+                for idx, j_target in enumerate(jours_semaine):
+                    if idx == 4:
                         semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
+                    else:
+                        if service_idx < len(services_uniques):
+                            h1, h2 = services_uniques[service_idx]
+                            dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
+                            dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
+                            if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
+                            
+                            semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
+                            service_idx += 1
+                        else:
+                            semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
 
-            for agent_name_pdf in agents_trouves_dans_pdf:
-                if agent_name_pdf not in planning_agents:
-                    planning_agents[agent_name_pdf] = {}
-                planning_agents[agent_name_pdf].update(semaine_agent)
-                logs_debug.append(f"✅ Synchro Semaine S{num_semaine} OK pour {agent_name_pdf}")
+                for agent_name_pdf in agents_trouves_dans_pdf:
+                    if agent_name_pdf not in planning_agents:
+                        planning_agents[agent_name_pdf] = {}
+                    # On fusionne sans écraser si on a plusieurs semaines
+                    planning_agents[agent_name_pdf].update(semaine_agent)
+                    logs_debug.append(f"✅ Synchro Semaine S{num_semaine} OK pour {agent_name_pdf}")
 
         except Exception as e:
             logs_debug.append(f"⚠️ Erreur de lecture sur {fichier.name} : {e}")
@@ -266,3 +275,58 @@ for item in tous_agents:
                                 limite_fin_str = heure_debut_str
                         else:
                             dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
+                            limite_fin_str = dt_fin_pot.strftime('%H:%M')
+                    else:
+                        dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
+                        limite_fin_str = dt_fin_pot.strftime('%H:%M')
+
+                    duree_fmt = decimal_to_hm(heures_restantes)
+                    creneau_texte = f"{duree_fmt} max ce jour (possibilité de placer sur un autre créneau libre dans le respect des 11h de repos)"
+                    opportunite = "possibilité de faire travailler l’agent"
+            
+            tableau_resultats.append({
+                "Contrats": contrat_nom,
+                "Agent": agent_nom,
+                "Date": d,
+                "Type d'opportunité": opportunite,
+                "Créneau horaire / Heures possibles": creneau_texte,
+                "Dernier recours": ""
+            })
+
+if tableau_resultats:
+    df_table = pd.DataFrame(tableau_resultats)
+
+    edited_df = st.data_editor(
+        df_table,
+        column_config={
+            "Dernier recours": st.column_config.TextColumn(
+                "Dernier recours (Saisie quotidienne)",
+                help="Saisir manuellement des notes ou commentaires",
+                max_chars=150
+            )
+        },
+        disabled=["Contrats", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
+        hide_index=True,
+    )
+    
+    # ---------------------------------------------------------
+    # BOUTON D'EXPORT EXCEL OFFICIEL
+    # ---------------------------------------------------------
+    st.markdown("---")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.success("✅ Données prêtes à être exportées pour vos justificatifs de planning.")
+    with col2:
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
+        processed_data = output.getvalue()
+        
+        st.download_button(
+            label="📥 Télécharger le rapport (Excel)",
+            data=processed_data,
+            file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+else:
+    st.warning("⚠️ Aucun résultat dans le tableau. Vérifiez vos fichiers PDF importés ou le filtre de semaine dans le menu de gauche.")
