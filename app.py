@@ -247,21 +247,7 @@ for item in tous_agents:
                                 heure_min_str = debut_autorise.strftime('%H:%M')
                                 dt_fin_max = min(debut_autorise + timedelta(hours=8), datetime.combine(dt_jour.date(), datetime.max.time()) - timedelta(hours=1))
                                 creneau_texte = f"De {heure_min_str} à {dt_fin_max.strftime('%H:%M')} (Repos 11h respecté)"
-                else:
-                    intervalles = info_jour["intervalles"]
-                    heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
-                    
-                    if heures_faites >= 10.0:
-                        h_faites_fmt = decimal_to_hm(heures_faites)
-                        creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
-                        opportunite = "🔴 Complet (10h atteint)"
-                    else:
-                        derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
-                        heure_debut_str = derniere_fin.strftime('%H:%M')
-                        heures_restantes = max(0.0, 10.0 - heures_faites)
-                        
-                        limite_fin_str = ""
-                        if idx_d + 1 < len(dates_triees):
+  if idx_d + 1 < len(dates_triees):
                             info_lendemain = matched_schedule.get(dates_triees[idx_d + 1], {})
                             intervalles_lendemain = info_lendemain.get("intervalles", [])
                             if intervalles_lendemain:
@@ -283,54 +269,3 @@ for item in tous_agents:
                         else:
                             dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
                             limite_fin_str = dt_fin_pot.strftime('%H:%M')
-
-                        duree_fmt = decimal_to_hm(heures_restantes)
-                        creneau_texte = f"{duree_fmt} max ce jour (entre {heure_debut_str} à {limite_fin_str} demain)"
-                        opportunite = "possibilité de faire travailler l’agent"
-                
-                tableau_resultats.append({
-                    "Contrat": contrat_nom,
-                    "Agent": agent_nom,
-                    "Date": d,
-                    "Type d'opportunité": opportunite,
-                    "Créneau horaire / Heures possibles": creneau_texte,
-                    "Dernier recours": ""
-                })
-
-if tableau_resultats:
-    df_table = pd.DataFrame(tableau_resultats)
-
-    edited_df = st.data_editor(
-        df_table,
-        column_config={
-            "Dernier recours": st.column_config.TextColumn(
-                "Dernier recours (Saisie quotidienne)",
-                help="Saisir manuellement des notes ou commentaires",
-                max_chars=150
-            )
-        },
-        disabled=["Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
-        hide_index=True,
-    )
-    
-    # ---------------------------------------------------------
-    # BOUTON D'EXPORT EXCEL OFFICIEL
-    # ---------------------------------------------------------
-    st.markdown("---")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.success("✅ Données prêtes à être exportées pour vos justificatifs de planning.")
-    with col2:
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
-        processed_data = output.getvalue()
-        
-        st.download_button(
-            label="📥 Télécharger le rapport (Excel)",
-            data=processed_data,
-            file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-else:
-    st.warning("⚠️ Aucun résultat dans le tableau. Vérifiez vos fichiers PDF importés ou le filtre de semaine dans le menu de gauche.")
