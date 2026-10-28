@@ -57,6 +57,15 @@ if erreur:
 
 semaine_selectionnee = st.sidebar.selectbox("3. Semaine à afficher en priorité", ["S43", "S44", "Les deux"])
 
+# Fonction utilitaire pour convertir les heures décimales en format XhMM
+def decimal_to_hm(heures_dec):
+    h = int(heures_dec)
+    m = int(round((heures_dec - h) * 60))
+    if m == 60:
+        h += 1
+        m = 0
+    return f"{h}h{m:02d}"
+
 # ---------------------------------------------------------
 # 2. ANALYSE CHRONOLOGIQUE ET INDEXATION PROPRE
 # ---------------------------------------------------------
@@ -200,7 +209,7 @@ for item in tous_agents:
         jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
         
         if jours_repos_total < 1:
-            st.warning(f"⚠️ **Alerte Réglementaire pour {agent_nom}** : Cet agent n'a aucun jour de repos répertorié cette semaine.")
+            st.warning(f"⚠️ **Alerte Réglementaire pour {agent_nom}** : Cet agent n'aucun jour de repos répertorié cette semaine.")
 
         for idx_d, d in enumerate(dates_triees):
             info_jour = matched_schedule[d]
@@ -232,7 +241,7 @@ for item in tous_agents:
                 heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
                 
                 if heures_faites >= 10.0:
-                    creneau_texte = f"Déjà {round(heures_faites, 2)}h faites ce jour (Plafond 10h atteint)"
+                    creneau_texte = f"Déjà {decimal_to_hm(heures_faites)} faites ce jour (Plafond 10h atteint)"
                     opportunite = "🔴 Complet (10h atteint)"
                 else:
                     derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
@@ -262,7 +271,8 @@ for item in tous_agents:
                         dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
                         limite_fin_str = dt_fin_pot.strftime('%H:%M')
 
-                    creneau_texte = f"{round(heures_restantes, 2)}h max ce jour à compter de {heure_debut_str} à {limite_fin_str} (déjà {round(heures_faites, 2)}h faites)"
+                    duree_fmt = decimal_to_hm(heures_restantes)
+                    creneau_texte = f"{duree_fmt} max ce jour à compter de {heure_debut_str} à {limite_fin_str}"
                     opportunite = "possibilité de faire travailler l’agent"
             
             tableau_resultats.append({
