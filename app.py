@@ -148,7 +148,7 @@ if fichiers_planning:
 
                 service_idx = 0
                 for idx, j_target in enumerate(jours_semaine):
-                    if idx == 4: # Vendredi repos
+                    if idx == 4: # Vendredi repos type
                         semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
                     else:
                         if service_idx < len(services_uniques):
@@ -197,7 +197,6 @@ for item in tous_agents:
     
     if matched_schedule:
         dates_triees = sorted(matched_schedule.keys(), key=lambda x: datetime.strptime(x, '%d/%m/%Y'))
-        
         jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
         
         if jours_repos_total < 1:
@@ -210,6 +209,8 @@ for item in tous_agents:
             
             if statut == "REPOS":
                 creneau_texte = "Journée complète (00h00 - 24h00)"
+                if jours_repos_total == 1:
+                    creneau_texte += " — seul jour de repos hebdo"
                 opportunite = "🟢 Jour de Repos"
                 
                 if idx_d > 0:
@@ -237,9 +238,32 @@ for item in tous_agents:
                     derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
                     heure_debut_str = derniere_fin.strftime('%H:%M')
                     heures_restantes = max(0.0, 10.0 - heures_faites)
-                    dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
-                    creneau_texte = f"De {heure_debut_str} à {dt_fin_pot.strftime('%H:%M')} ({round(heures_restantes, 2)}h max, déjà {round(heures_faites, 2)}h faites)"
-                    opportunite = "🟡 Heures sup / Jour travaillé"
+                    
+                    # Vérification de la contrainte 11h de repos avant la vacation du lendemain
+                    limite_fin_str = ""
+                    if idx_d + 1 < len(dates_triees):
+                        info_lendemain = matched_schedule.get(dates_triees[idx_d + 1], {})
+                        intervalles_lendemain = info_lendemain.get("intervalles", [])
+                        if intervalles_lendemain:
+                            premiere_debut_lendemain = min([iv[0] for iv in intervalles_lendemain])
+                            max_fin_par_repos = premiere_debut_lendemain - timedelta(hours=11)
+                            dt_fin_pot_10h = derniere_fin + timedelta(hours=heures_restantes)
+                            dt_fin_pot = min(dt_fin_pot_10h, max_fin_par_repos)
+                            if dt_fin_pot > derniere_fin:
+                                heures_restantes = (dt_fin_pot - derniere_fin).total_seconds() / 3600.0
+                                limite_fin_str = dt_fin_pot.strftime('%H:%M')
+                            else:
+                                heures_restantes = 0.0
+                                limite_fin_str = heure_debut_str
+                        else:
+                            dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
+                            limite_fin_str = dt_fin_pot.strftime('%H:%M')
+                    else:
+                        dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
+                        limite_fin_str = dt_fin_pot.strftime('%H:%M')
+
+                    creneau_texte = f"{round(heures_restantes, 2)}h max ce jour à compter de {heure_debut_str} à {limite_fin_str} (déjà {round(heures_faites, 2)}h faites)"
+                    opportunite = "possibilité de faire travailler l’agent"
             
             tableau_resultats.append({
                 "Contrats": contrat_nom,
