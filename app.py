@@ -147,24 +147,87 @@ with tab_dispo:
     if fichiers_planning:
         for fichier in fichiers_planning:
             match_semaine = re.search(r'S([0-9]{1,2})', fichier.name.upper())
+            if not match_semaine:
+                match_semaine = re.search(r'2026([0-9]{2})', fichier.name.upper())
             num_semaine = int(match_semaine.group(1)) if match_semaine else 43
 
             try:
                 reader = pypdf.PdfReader(fichier)
-                texte_global = "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
+                texte_par_page = []
+                for page in reader.pages:
+                    t = page.extract_text(extraction_mode="layout") or page.extract_text()
+                    if t:
+                        texte_par_page.append(t)
+                
+                texte_global = "\n".join(texte_par_page)
 
                 annee_ref = 2026
-                start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
+                try:
+                    start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
+                except Exception:
+                    jan4 = datetime(annee_ref, 1, 4)
+                    start_week1 = jan4 - timedelta(days=jan4.weekday())
+                    start_target = start_week1 + timedelta(weeks=num_semaine - 1)
+                
                 jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
 
                 for ex_agent in df_agents["Agent"].unique():
                     if not noms_sont_compatibles(ex_agent, texte_global):
                         continue
 
-                    # Structure de base propre par défaut (Jour de repos initial)
-                    semaine_agent = {j: {"statut": "REPOS", "heure_fin_reelle": "00:00", "duree_existante": 0.0} for j in jours_semaine}
-                    cle_dict = f"{ex_agent}_S{num_semaine}"
-                    planning_agents[cle_dict] = semaine_agent
+                    mots_cles = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 1]
+                    
+                    # Isoler les lignes contenant l'agent dans le PDF
+                    lignes_agent = []
+                    for block in texte_par_page:
+                        for line in block.split('\n'):
+                            line_upper = line.upper()
+                            if any(m in line_upper for m in mots_cles):
+                                lignes_agent.append(line)
+
+                    # Extraction de toutes les paires d'heures valides (vacations)
+                    toutes_vacations = []
+                    source = lignes_agent if lignes_agent else texte_par_page
+                    for block in source:
+                        if isinstance(block, str):
+                            lignes_texte = block.split('\n')
+                        else:
+                            lignes_texte = [block]
+
+                        for line in lignes_texte:
+                            hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
+                            if len(hours) >= 2:
+                                for idx_h in range(0, len(hours) - 1, 2):
+                                    h1, h2 = hours[idx_h], hours[idx_h+1]
+                                    try:
+                                        t1 = datetime.strptime(h1, '%H:%M')
+                                        t2 = datetime.strptime(h2, '%H:%M')
+                                        diff = (t2 - t1).total_seconds()
+                                        if diff <= 0: diff += 24 * 3600
+                                        duree = diff / 3600.0
+                                        if 0.5 <= duree <= 15.0:
+                                            toutes_vacations.append((h1, h2, duree))
+                                    except Exception:
+                                        pass
+
+                    # Attribution séquentielle aux 7 jours de la semaine
+                    semaine_agent = {}
+                    for idx, j_target in enumerate(jours_semaine):
+                        if idx < len(toutes_vacations):
+                            h1, h2, duree = toutes_vacations[idx]
+                            semaine_agent[j_target] = {
+                                "statut": "TRAVAIL",
+                                "heure_fin_reelle": h2,
+                                "duree_existante": duree
+                            }
+                        else:
+                            semaine_agent[j_target] = {
+                                "statut": "REPOS",
+                                "heure_fin_reelle": "00:00",
+                                "duree_existante": 0.0
+                            }
+
+                    planning_agents[f"{ex_agent}_S{num_semaine}"] = semaine_agent
 
             except Exception as e:
                 logs_debug.append(f"Erreur fichier {fichier.name}: {e}")
@@ -177,7 +240,13 @@ with tab_dispo:
 
     for num_semaine in semaines_tableau:
         annee_ref = 2026
-        start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
+        try:
+            start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
+        except Exception:
+            jan4 = datetime(annee_ref, 1, 4)
+            start_week1 = jan4 - timedelta(days=jan4.weekday())
+            start_target = start_week1 + timedelta(weeks=num_semaine - 1)
+        
         jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
 
         for item in tous_agents:
@@ -190,16 +259,31 @@ with tab_dispo:
             if not matched_schedule:
                 matched_schedule = {j: {"statut": "REPOS", "heure_fin_reelle": "00:00", "duree_existante": 0.0} for j in jours_defaut}
 
-            for d in sorted(matched_schedule.keys(), key=lambda x: datetime.strptime(x, '%d/%m/%Y')):
+            dates_triees = sorted(matched_schedule.keys(), key=lambda x: datetime.strptime(x, '%d/%m/%Y'))
+            jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
+
+            for d in dates_triees:
                 info_jour = matched_schedule[d]
                 statut = info_jour["statut"]
                 
                 if statut == "REPOS":
                     creneau_texte = "Journée complète (00h00 - 24h00)"
+                    if jours_repos_total == 1:
+                        creneau_texte += " — seul jour de repos hebdo"
                     opportunite = "🟢 Jour de Repos"
                 else:
-                    creneau_texte = "Créneau de travail"
-                    opportunite = "Occupé"
+                    duree_existante = info_jour["duree_existante"]
+                    heure_fin = info_jour["heure_fin_reelle"]
+                    
+                    if duree_existante >= 10.0:
+                        h_faites_fmt = decimal_to_hm(duree_existante)
+                        creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
+                        opportunite = "🔴 Complet (10h atteint)"
+                    else:
+                        heures_restantes = max(0.0, 10.0 - duree_existante)
+                        duree_fmt = decimal_to_hm(heures_restantes)
+                        creneau_texte = f"{duree_fmt} max ce jour (entre {heure_fin} à 00:00)"
+                        opportunite = "possibilité de faire travailler l’agent"
                 
                 tableau_resultats.append({
                     "Semaine": f"S{num_semaine}",
