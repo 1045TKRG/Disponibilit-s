@@ -158,18 +158,15 @@ with tab_dispo:
                 else:
                     semaines_a_traiter = [43, 44]
 
-            logs_debug.append(f"📄 Traitement du fichier : {fichier.name} pour les semaines {semaines_a_traiter}")
-
             try:
                 reader = pypdf.PdfReader(fichier)
                 texte_par_page = []
-                for page_idx, page in enumerate(reader.pages):
+                for page in reader.pages:
                     t = page.extract_text(extraction_mode="layout") or page.extract_text()
                     if t:
                         texte_par_page.append(t)
                 
                 texte_global = "\n".join(texte_par_page)
-                logs_debug.append(f"ℹ️ Texte extrait avec succès de {len(reader.pages)} page(s) pour {fichier.name}.")
 
                 for num_semaine in semaines_a_traiter:
                     if semaine_selectionnee != "Les deux" and f"S{num_semaine}" != semaine_selectionnee:
@@ -185,12 +182,10 @@ with tab_dispo:
                     
                     jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
 
-                    agents_trouves_count = 0
                     for ex_agent in df_agents["Agent"].unique():
                         if not noms_sont_compatibles(ex_agent, texte_global):
                             continue
 
-                        agents_trouves_count += 1
                         mots_cles = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 1]
                         lignes_agent = []
                         
@@ -212,11 +207,13 @@ with tab_dispo:
 
                         source_lignes = lignes_agent if lignes_agent else texte_global.split('\n')
 
+                        # Dictionnaire rigoureux pour dédupliquer les créneaux par date
                         services_par_date = {}
                         for line in source_lignes:
                             match_date = re.search(r'\b([0-3]?[0-9])/([0-1]?[0-9])/(?:20[2-3][0-9])?\b', line)
                             hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
                             
+                            # On cherche un intervalle horaire unique par ligne pour éviter les cumuls erronés
                             if len(hours) >= 2:
                                 h1, h2 = hours[0], hours[1]
                                 try:
@@ -232,43 +229,23 @@ with tab_dispo:
                                             date_trouvee = f"{j_str}/{m_str}/{annee_ref}"
                                             if date_trouvee in jours_semaine:
                                                 if date_trouvee not in services_par_date:
-                                                    services_par_date[date_trouvee] = []
-                                                services_par_date[date_trouvee].append((t1, h1, h2, duree))
+                                                    services_par_date[date_trouvee] = set()
+                                                services_par_date[date_trouvee].add((h1, h2, t1, t2, duree))
                                 except Exception:
                                     pass
 
                         semaine_agent = {}
-                        all_extracted_services = []
-                        for line in source_lignes:
-                            hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
-                            if len(hours) >= 2:
-                                h1, h2 = hours[0], hours[1]
-                                try:
-                                    t1 = datetime.strptime(h1, '%H:%M')
-                                    t2 = datetime.strptime(h2, '%H:%M')
-                                    diff = (t2 - t1).total_seconds()
-                                    if diff <= 0: diff += 24 * 3600
-                                    duree = diff / 3600.0
-                                    if 0.5 <= duree <= 15.0:
-                                        all_extracted_services.append((t1, h1, h2))
-                                except Exception:
-                                    pass
-
-                        all_extracted_services.sort(key=lambda x: x[0])
                         
+                        # Remplissage jour par jour de la semaine
                         for idx, j_target in enumerate(jours_semaine):
                             if j_target in services_par_date and services_par_date[j_target]:
-                                s_jour = services_par_date[j_target][0]
-                                h1, h2 = s_jour[1], s_jour[2]
+                                # On prend le premier service unique trouvé pour cette date
+                                s_uniques = list(services_par_date[j_target])
+                                h1, h2, t1, t2, duree = s_uniques[0]
                                 dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
                                 dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
                                 if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
-                                semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
-                            elif idx < len(all_extracted_services):
-                                h1, h2 = all_extracted_services[idx][1], all_extracted_services[idx][2]
-                                dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
-                                dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
-                                if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
+                                
                                 semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
                             else:
                                 semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
@@ -276,12 +253,8 @@ with tab_dispo:
                         cle_dict = f"{ex_agent}_S{num_semaine}"
                         planning_agents[cle_dict] = semaine_agent
 
-                    logs_debug.append(f"👥 {agents_trouves_count} agent(s) reconnu(s) et analysé(s) pour la semaine S{num_semaine}.")
-
             except Exception as e:
                 logs_debug.append(f"⚠️ Erreur critique de lecture sur {fichier.name} : {e}")
-    else:
-        logs_debug.append("⚠️ Aucun fichier PDF de planning n'a été importé dans le menu de gauche.")
 
     with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
         for log in logs_debug:
@@ -395,4 +368,233 @@ with tab_dispo:
         st.warning("⚠️ Aucun résultat dans le tableau.")
 
 # ---------------------------------------------------------
-# ONGLET 2 :
+# ONGLET 2 : CONGÉS PAYÉS & ANALYSES
+# ---------------------------------------------------------
+with tab_cp:
+    st.subheader("🏖️ Suivi des Congés Payés (CP) & Tableau d'Analyse")
+    col_up1, col_up2 = st.columns(2)
+    with col_up1:
+        f_cp_excel = st.file_uploader("Importer un fichier Excel (CP)", type=["xlsx", "xls"], key="up_cp_excel")
+    with col_up2:
+        f_cp_pdf = st.file_uploader("Importer un fichier PDF (CP)", type=["pdf"], key="up_cp_pdf")
+        
+    data_cp_defaut = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Type de Congé", "Statut"])
+    if f_cp_excel:
+        try:
+            data_cp_defaut = pd.read_excel(f_cp_excel)
+        except Exception as e:
+            st.error(f"Erreur : {e}")
+
+    edited_cp = st.data_editor(
+        data_cp_defaut,
+        num_rows="dynamic",
+        hide_index=True,
+        key="editor_cp_interactif",
+        column_config={
+            "Statut": st.column_config.SelectboxColumn(
+                "Statut",
+                options=["Demandé", "Validé", "Refusé"],
+                required=True
+            )
+        }
+    )
+    
+    st.markdown("---")
+    st.subheader("📊 Tableau d'Analyse — Congés Payés")
+    if not edited_cp.empty and "Statut" in edited_cp.columns:
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("Total Demandes CP", len(edited_cp))
+        col_m2.metric("Congés Validés", len(edited_cp[edited_cp["Statut"] == "Validé"]))
+        col_m3.metric("En attente", len(edited_cp[edited_cp["Statut"] == "Demandé"]))
+        
+        df_analyse_cp = edited_cp["Statut"].value_counts().reset_index()
+        df_analyse_cp.columns = ["Statut", "Nombre"]
+        st.dataframe(df_analyse_cp, hide_index=True)
+        st.bar_chart(df_analyse_cp.set_index("Statut"))
+    else:
+        st.info("Ajoutez des données dans le tableau ci-dessus pour afficher l'analyse.")
+
+    if not edited_cp.empty:
+        output_cp = BytesIO()
+        with pd.ExcelWriter(output_cp, engine='openpyxl') as writer:
+            edited_cp.to_excel(writer, index=False, sheet_name='Conges_Payes')
+        st.download_button(
+            label="📥 Télécharger le suivi des CP (Excel)",
+            data=output_cp.getvalue(),
+            file_name=f"Suivi_Conges_Payes_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+# ---------------------------------------------------------
+# ONGLET 3 : MALADIES & ANALYSES
+# ---------------------------------------------------------
+with tab_maladies:
+    st.subheader("🏥 Suivi des Arrêts Maladie & Tableau d'Analyse")
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        f_mal_excel = st.file_uploader("Importer un fichier Excel (Maladies)", type=["xlsx", "xls"], key="up_mal_excel")
+    with col_m2:
+        f_mal_pdf = st.file_uploader("Importer un fichier PDF (Maladies / Justificatif)", type=["pdf"], key="up_mal_pdf")
+        
+    data_mal_defaut = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Motif / Justificatif", "Commentaire"])
+    if f_mal_excel:
+        try:
+            data_mal_defaut = pd.read_excel(f_mal_excel)
+        except Exception as e:
+            st.error(f"Erreur : {e}")
+
+    edited_maladies = st.data_editor(
+        data_mal_defaut,
+        num_rows="dynamic",
+        hide_index=True,
+        key="editor_maladies_interactif"
+    )
+    
+    st.markdown("---")
+    st.subheader("📊 Tableau d'Analyse — Maladies & Absences")
+    if not edited_maladies.empty:
+        st.metric("Total Arrêts / Absences enregistrés", len(edited_maladies))
+        if "Agent" in edited_maladies.columns:
+            df_analyse_mal = edited_maladies["Agent"].value_counts().reset_index()
+            df_analyse_mal.columns = ["Agent", "Nombre d'arrêts"]
+            st.dataframe(df_analyse_mal, hide_index=True)
+            if not df_analyse_mal.empty and df_analyse_mal["Agent"].iloc[0] != "":
+                st.bar_chart(df_analyse_mal.set_index("Agent"))
+    else:
+        st.info("Ajoutez des données dans le tableau ci-dessus pour afficher l'analyse.")
+
+    if not edited_maladies.empty:
+        output_mal = BytesIO()
+        with pd.ExcelWriter(output_mal, engine='openpyxl') as writer:
+            edited_maladies.to_excel(writer, index=False, sheet_name='Maladies_Absences')
+        st.download_button(
+            label="📥 Télécharger le suivi des Maladies (Excel)",
+            data=output_mal.getvalue(),
+            file_name=f"Suivi_Maladies_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+# ---------------------------------------------------------
+# ONGLET 4 : CP FÊTES DE FIN D'ANNÉE (5 ANS & RÉCURRENCES)
+# ---------------------------------------------------------
+with tab_cp_fin:
+    st.subheader("🎄 Analyse sur 5 ans — Congés Payés (Fêtes de Fin d'Année)")
+    col_cf1, col_cf2 = st.columns(2)
+    with col_cf1:
+        f_cp5_excel = st.file_uploader("Importer historique Excel (CP 5 ans)", type=["xlsx", "xls"], key="up_cp5_excel")
+    with col_cf2:
+        f_cp5_pdf = st.file_uploader("Importer historique PDF (CP 5 ans)", type=["pdf"], key="up_cp5_pdf")
+
+    data_cp5_defaut = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année"])
+    if f_cp5_excel:
+        try:
+            data_cp5_defaut = pd.read_excel(f_cp5_excel)
+        except Exception as e:
+            st.error(f"Erreur : {e}")
+
+    edited_cp5 = st.data_editor(
+        data_cp5_defaut,
+        num_rows="dynamic",
+        hide_index=True,
+        key="editor_cp5_fetes"
+    )
+
+    st.markdown("---")
+    st.subheader("🔍 Filtrage & Détection des Récurrences (24/25/31 Décembre & 1er Janvier)")
+    if not edited_cp5.empty and "Date Début" in edited_cp5.columns and "Date Fin" in edited_cp5.columns:
+        lignes_fetes = []
+        for idx, row in edited_cp5.iterrows():
+            d_deb_str = str(row.get("Date Début", ""))
+            d_fin_str = str(row.get("Date Fin", ""))
+            agent_nom = str(row.get("Agent", "Inconnu"))
+            annee_val = str(row.get("Année", ""))
+
+            try:
+                dt_deb = pd.to_datetime(d_deb_str, dayfirst=True, errors='coerce')
+                dt_fin = pd.to_datetime(d_fin_str, dayfirst=True, errors='coerce')
+
+                if pd.notna(dt_deb) and pd.notna(dt_fin):
+                    plage_dates = pd.date_range(start=dt_deb, end=dt_fin)
+                    touche_fetes = any((dt.month == 12 and dt.day in [24, 25, 31]) or (dt.month == 1 and dt.day == 1) for dt in plage_dates)
+                    
+                    if touche_fetes:
+                        annee_detectee = annee_val if annee_val else str(dt_deb.year)
+                        lignes_fetes.append({"Agent": agent_nom, "Date Début": d_deb_str, "Date Fin": d_fin_str, "Année": annee_detectee})
+            except Exception:
+                pass
+
+        df_fetes_cp = pd.DataFrame(lignes_fetes)
+        if not df_fetes_cp.empty:
+            st.success(f"🎯 {len(df_fetes_cp)} période(s) de congé identifiée(s) sur les fêtes de fin d'année !")
+            st.dataframe(df_fetes_cp, hide_index=True)
+            recurrence_cp = df_fetes_cp["Agent"].value_counts().reset_index()
+            recurrence_cp.columns = ["Agent", "Nombre de Noëls / Nouvel An pris"]
+            st.dataframe(recurrence_cp, hide_index=True)
+            st.bar_chart(recurrence_cp.set_index("Agent"))
+        else:
+            st.info("Aucun congé ne correspond aux dates cibles (24, 25, 31 décembre ou 1er janvier).")
+    else:
+        st.info("Remplissez ou importez l'historique sur 5 ans pour lancer l'analyse des récurrences.")
+
+# ---------------------------------------------------------
+# ONGLET 5 : MALADIES FÊTES DE FIN D'ANNÉE (5 ANS & RÉCURRENCES)
+# ---------------------------------------------------------
+with tab_maladies_fin:
+    st.subheader("🎄 Analyse sur 5 ans — Arrêts Maladie (Fêtes de Fin d'Année)")
+    col_mf1, col_mf2 = st.columns(2)
+    with col_mf1:
+        f_mal5_excel = st.file_uploader("Importer historique Excel (Maladies 5 ans)", type=["xlsx", "xls"], key="up_mal5_excel")
+    with col_mf2:
+        f_mal5_pdf = st.file_uploader("Importer historique PDF (Maladies 5 ans)", type=["pdf"], key="up_mal5_pdf")
+
+    data_mal5_defaut = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année", "Motif"])
+    if f_mal5_excel:
+        try:
+            data_mal5_defaut = pd.read_excel(f_mal5_excel)
+        except Exception as e:
+            st.error(f"Erreur : {e}")
+
+    edited_mal5 = st.data_editor(
+        data_mal5_defaut,
+        num_rows="dynamic",
+        hide_index=True,
+        key="editor_mal5_fetes"
+    )
+
+    st.markdown("---")
+    st.subheader("🔍 Filtrage & Détection des Récurrences (Maladies pendant les Fêtes)")
+    if not edited_mal5.empty and "Date Début" in edited_mal5.columns and "Date Fin" in edited_mal5.columns:
+        lignes_mal_fetes = []
+        for idx, row in edited_mal5.iterrows():
+            d_deb_str = str(row.get("Date Début", ""))
+            d_fin_str = str(row.get("Date Fin", ""))
+            agent_nom = str(row.get("Agent", "Inconnu"))
+            annee_val = str(row.get("Année", ""))
+            motif_val = str(row.get("Motif", ""))
+
+            try:
+                dt_deb = pd.to_datetime(d_deb_str, dayfirst=True, errors='coerce')
+                dt_fin = pd.to_datetime(d_fin_str, dayfirst=True, errors='coerce')
+
+                if pd.notna(dt_deb) and pd.notna(dt_fin):
+                    plage_dates = pd.date_range(start=dt_deb, end=dt_fin)
+                    touche_fetes = any((dt.month == 12 and dt.day in [24, 25, 31]) or (dt.month == 1 and dt.day == 1) for dt in plage_dates)
+                    
+                    if touche_fetes:
+                        annee_detectee = annee_val if annee_val else str(dt_deb.year)
+                        lignes_mal_fetes.append({"Agent": agent_nom, "Date Début": d_deb_str, "Date Fin": d_fin_str, "Année": annee_detectee, "Motif": motif_val})
+            except Exception:
+                pass
+
+        df_fetes_mal = pd.DataFrame(lignes_mal_fetes)
+        if not df_fetes_mal.empty:
+            st.success(f"🎯 {len(df_fetes_mal)} arrêt(s) maladie identifié(s) pendant les fêtes !")
+            st.dataframe(df_fetes_mal, hide_index=True)
+            recurrence_mal = df_fetes_mal["Agent"].value_counts().reset_index()
+            recurrence_mal.columns = ["Agent", "Nombre d'arrêts pendant les fêtes"]
+            st.dataframe(recurrence_mal, hide_index=True)
+            st.bar_chart(recurrence_mal.set_index("Agent"))
+        else:
+            st.info("Aucun arrêt maladie ne coïncide avec les fêtes de fin d'année.")
+    else:
+        st.info("Remplissez ou importez l'historique sur 5 ans pour lancer l'analyse.")
