@@ -139,4 +139,44 @@ with tab_dispo:
                 semaines_a_traiter.append(int(match_semaine.group(1)))
             else:
                 if semaine_selectionnee != "Les deux":
-                    semaines_a_traiter.append(int(semaine_selectionnee.replace('S',
+                    semaines_a_traiter.append(int(semaine_selectionnee.replace('S', '')))
+                else:
+                    semaines_a_traiter = [43, 44]
+
+            try:
+                reader = pypdf.PdfReader(fichier)
+                lignes_texte = []
+                for page in reader.pages:
+                    t = page.extract_text(extraction_mode="layout") or page.extract_text()
+                    if t:
+                        for l in t.split('\n'):
+                            l_clean = l.strip()
+                            if l_clean:
+                                lignes_texte.append(l_clean)
+                
+                texte_global = "\n".join(lignes_texte)
+                
+                agents_trouves_dans_pdf = []
+                for ex_agent in df_agents["Agent"].unique():
+                    if noms_sont_compatibles(ex_agent, texte_global):
+                        agents_trouves_dans_pdf.append(ex_agent)
+                
+                logs_debug.append(f"📁 Fichier `{fichier.name}` : {len(agents_trouves_dans_pdf)} agent(s) détecté(s).")
+
+                for num_semaine in semaines_a_traiter:
+                    if semaine_selectionnee != "Les deux" and f"S{num_semaine}" != semaine_selectionnee:
+                        continue
+
+                    annee_ref = 2026
+                    try:
+                        start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
+                    except Exception:
+                        jan4 = datetime(annee_ref, 1, 4)
+                        start_week1 = jan4 - timedelta(days=jan4.weekday())
+                        start_target = start_week1 + timedelta(weeks=num_semaine - 1)
+                    
+                    jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
+                    
+                    services_tries = []
+                    for line in lignes_texte:
+                        hours = re.findall(r'\b(
