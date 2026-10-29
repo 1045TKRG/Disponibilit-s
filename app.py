@@ -145,7 +145,6 @@ with tab_dispo:
         return matches >= 1
 
     if fichiers_planning:
-        logs_debug.append(f"📁 Nombre de fichiers PDF détectés : {len(fichiers_planning)}")
         for fichier in fichiers_planning:
             match_semaine = re.search(r'S([0-9]{1,2})', fichier.name.upper())
             
@@ -190,30 +189,16 @@ with tab_dispo:
                         lignes_agent = []
                         
                         for block in texte_par_page:
-                            lignes_block = block.split('\n')
-                            capturer = False
-                            for line in lignes_block:
-                                line_upper = line.upper()
-                                if any(m in line_upper for m in mots_cles):
-                                    capturer = True
+                            block_upper = block.upper()
+                            if any(m in block_upper for m in mots_cles):
+                                for line in block.split('\n'):
                                     lignes_agent.append(line)
-                                    continue
-                                
-                                if capturer:
-                                    if any(w.upper() in line_upper for w in ["CONTRAT", "SITE", "TOTAL"]) and not any(m in line_upper for m in mots_cles):
-                                        capturer = False
-                                    else:
-                                        lignes_agent.append(line)
 
                         source_lignes = lignes_agent if lignes_agent else texte_global.split('\n')
 
-                        # Dictionnaire rigoureux pour dédupliquer les créneaux par date
-                        services_par_date = {}
+                        services_agent = []
                         for line in source_lignes:
-                            match_date = re.search(r'\b([0-3]?[0-9])/([0-1]?[0-9])/(?:20[2-3][0-9])?\b', line)
                             hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
-                            
-                            # On cherche un intervalle horaire unique par ligne pour éviter les cumuls erronés
                             if len(hours) >= 2:
                                 h1, h2 = hours[0], hours[1]
                                 try:
@@ -223,29 +208,18 @@ with tab_dispo:
                                     if diff <= 0: diff += 24 * 3600
                                     duree = diff / 3600.0
                                     if 0.5 <= duree <= 15.0:
-                                        if match_date:
-                                            j_str = match_date.group(1).zfill(2)
-                                            m_str = match_date.group(2).zfill(2)
-                                            date_trouvee = f"{j_str}/{m_str}/{annee_ref}"
-                                            if date_trouvee in jours_semaine:
-                                                if date_trouvee not in services_par_date:
-                                                    services_par_date[date_trouvee] = set()
-                                                services_par_date[date_trouvee].add((h1, h2, t1, t2, duree))
+                                        if (h1, h2) not in [(s[0], s[1]) for s in services_agent]:
+                                            services_agent.append((h1, h2))
                                 except Exception:
                                     pass
 
                         semaine_agent = {}
-                        
-                        # Remplissage jour par jour de la semaine
                         for idx, j_target in enumerate(jours_semaine):
-                            if j_target in services_par_date and services_par_date[j_target]:
-                                # On prend le premier service unique trouvé pour cette date
-                                s_uniques = list(services_par_date[j_target])
-                                h1, h2, t1, t2, duree = s_uniques[0]
+                            if idx < len(services_agent):
+                                h1, h2 = services_agent[idx]
                                 dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
                                 dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
                                 if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
-                                
                                 semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
                             else:
                                 semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
@@ -254,7 +228,7 @@ with tab_dispo:
                         planning_agents[cle_dict] = semaine_agent
 
             except Exception as e:
-                logs_debug.append(f"⚠️ Erreur critique de lecture sur {fichier.name} : {e}")
+                logs_debug.append(f"⚠️ Erreur sur {fichier.name} : {e}")
 
     with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
         for log in logs_debug:
