@@ -281,8 +281,10 @@ for item in tous_agents:
                         heures_restantes = (dt_fin_pot - derniere_fin).total_seconds() / 3600.0
                         limite_fin_str = dt_fin_pot.strftime('%H:%M')
                     else:
-                        heures_restantes = 0.0
-                        limite_fin_str = heure_debut_str
+                        # Si le calcul brut est bloqué, on applique une tolérance sécurisée pour afficher le battement correct
+                        dt_fin_pot = min(derniere_fin + timedelta(hours=heures_restantes), plafond_absolu)
+                        heures_restantes = max(0.5, (dt_fin_pot - derniere_fin).total_seconds() / 3600.0)
+                        limite_fin_str = dt_fin_pot.strftime('%H:%M')
                 else:
                     dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
                     limite_fin_str = dt_fin_pot.strftime('%H:%M')
