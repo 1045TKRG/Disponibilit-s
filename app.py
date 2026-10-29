@@ -177,22 +177,4 @@ if fichiers_planning:
                             if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
                             
                             semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
-                            service_idx += 1
-                        else:
-                            semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
-
-                for agent_name in agents_trouves_dans_pdf:
-                    cle_dict = f"{agent_name}_S{num_semaine}"
-                    if cle_dict not in planning_agents:
-                        planning_agents[cle_dict] = {}
-                    planning_agents[cle_dict].update(semaine_agent)
-
-        except Exception as e:
-            logs_debug.append(f"⚠️ Erreur de lecture sur {fichier.name} : {e}")
-
-with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
-    for log in logs_debug:
-        st.write(log)
-
-# ---------------------------------------------------------
-# 3. GÉNÉRATION DU TABLEAU (MODE SÉCURISÉ
+                            service
