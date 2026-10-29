@@ -260,3 +260,16 @@ with tab_dispo:
             matched_schedule = {j: {"statut": "REPOS", "intervalles": []} for j in jours_defaut}
 
         dates_triees = sorted(
+            list(matched_schedule.keys()), 
+            key=lambda x: datetime.strptime(x, '%d/%m/%Y')
+        )
+        jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
+
+        for idx_d, d in enumerate(dates_triees):
+            info_jour = matched_schedule[d]
+            statut = info_jour["statut"]
+            dt_jour = datetime.strptime(d, '%d/%m/%Y')
+            
+            if statut == "REPOS":
+                creneau_texte = "Journée complète (00h00 - 24h00)"
+                if jours_repos_total ==
