@@ -199,13 +199,10 @@ if fichiers_planning:
                     
                     jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
 
-                    # Parcours agent par agent dans le référentiel Excel
                     for ex_agent in df_agents["Agent"].unique():
-                        # On vérifie si l'agent est présent dans ce PDF
                         if not noms_sont_compatibles(ex_agent, texte_global):
                             continue
 
-                        # Extraction des lignes spécifiques à cet agent dans le PDF
                         mots_cles = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 1]
                         lignes_agent = []
                         for block in texte_par_page:
@@ -214,7 +211,6 @@ if fichiers_planning:
                                 if any(m in line_upper for m in mots_cles):
                                     lignes_agent.append(line)
 
-                        # Analyse des heures uniques pour cet agent spécifique
                         services_tries = []
                         source_lignes = lignes_agent if lignes_agent else texte_global.split('\n')
                         
@@ -242,7 +238,6 @@ if fichiers_planning:
                                 seen_intervalles.add(sig)
                                 services_uniques.append((s[1], s[2]))
 
-                        # Affectation du planning de la semaine pour cet agent
                         semaine_agent = {}
                         service_idx = 0
                         for idx, j_target in enumerate(jours_semaine):
@@ -266,7 +261,6 @@ if fichiers_planning:
     with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
         for log in logs_debug:
             st.write(log)
-
     st.subheader("📋 Liste des Disponibilités & Opportunités")
 
     tableau_resultats = []
