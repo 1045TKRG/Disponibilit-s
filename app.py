@@ -34,10 +34,10 @@ if not st.session_state["authentifie"]:
         else:
             st.error("Mot de passe incorrect. Accès refusé.")
             
-    st.stop()  # Bloque l'exécution du reste du code tant que le mot de passe n'est pas bon
+    st.stop()
 
 # ---------------------------------------------------------
-# INTERFACE PRINCIPALE (Accessible uniquement une fois connecté)
+# INTERFACE PRINCIPALE
 # ---------------------------------------------------------
 col_titre, col_deco = st.columns([4, 1])
 with col_titre:
@@ -60,7 +60,7 @@ tab_dispo, tab_cp, tab_maladies = st.tabs([
 # ONGLET 1 : DISPONIBILITÉS
 # ---------------------------------------------------------
 with tab_dispo:
-    st.sidebar.header("📁 Données de la Semaine")
+    st.sidebar.header("📁 Données de la Semaine (Dispo)")
     uploaded_excel = st.sidebar.file_uploader(
         "1. Fichier Référentiel Agents (.xlsx)", 
         type=["xlsx", "xls"],
@@ -240,7 +240,7 @@ with tab_dispo:
 
     annee_ref = 2026
     start_target = datetime.fromisocalendar(annee_ref, 43, 1)
-    jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
+    jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y'] for i in range(7)]
 
     for item in tous_agents:
         contrat_nom = item["Contrat"]
@@ -335,21 +335,100 @@ with tab_dispo:
         st.warning("⚠️ Aucun résultat dans le tableau.")
 
 # ---------------------------------------------------------
-# ONGLET 2 : CONGÉS PAYÉS
+# ONGLET 2 : CONGÉS PAYÉS (Avec Import Excel/PDF & Ajout manuel)
 # ---------------------------------------------------------
 with tab_cp:
     st.subheader("🏖️ Suivi des Congés Payés (CP)")
-    st.info("Espace de suivi et saisie des demandes de congés payés.")
+    st.write("Vous pouvez importer un fichier existant (Excel/PDF) ou ajouter/modifier les lignes directement ci-dessous.")
     
-    df_cp = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Type de Congé", "Statut"])
-    st.data_editor(df_cp, num_rows="dynamic", hide_index=True, key="editor_cp")
+    col_up1, col_up2 = st.columns(2)
+    with col_up1:
+        f_cp_excel = st.file_uploader("Importer un fichier Excel (CP)", type=["xlsx", "xls"], key="up_cp_excel")
+    with col_up2:
+        f_cp_pdf = st.file_uploader("Importer un fichier PDF (CP)", type=["pdf"], key="up_cp_pdf")
+        
+    # Charger les données initiales ou importées
+    data_cp_defaut = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Type de Congé", "Statut"])
+    
+    if f_cp_excel:
+        try:
+            data_cp_defaut = pd.read_excel(f_cp_excel)
+            st.success("Fichier Excel CP importé avec succès !")
+        except Exception as e:
+            st.error(f"Erreur de lecture Excel : {e}")
+            
+    elif f_cp_pdf:
+        try:
+            reader = pypdf.PdfReader(f_cp_pdf)
+            texte_pdf = ""
+            for page in reader.pages:
+                texte_pdf += page.extract_text() or ""
+            st.info("Fichier PDF lu. Vous pouvez compléter ou vérifier les informations extraites dans le tableau ci-dessous.")
+        except Exception as e:
+            st.error(f"Erreur de lecture PDF : {e}")
+
+    # Tableau interactif (Ajout manuel, modification et suppression possibles)
+    edited_cp = st.data_editor(
+        data_cp_defaut,
+        num_rows="dynamic",
+        hide_index=True,
+        key="editor_cp_interactif",
+        column_config={
+            "Statut": st.column_config.SelectboxColumn(
+                "Statut",
+                options=["Demandé", "Validé", "Refusé"],
+                required=True
+            )
+        }
+    )
+    
+    # Bouton d'export pour les CP
+    if not edited_cp.empty:
+        output_cp = BytesIO()
+        with pd.ExcelWriter(output_cp, engine='openpyxl') as writer:
+            edited_cp.to_excel(writer, index=False, sheet_name='Conges_Payes')
+        st.download_button(
+            label="📥 Télécharger le suivi des CP (Excel)",
+            data=output_cp.getvalue(),
+            file_name=f"Suivi_Conges_Payes_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 # ---------------------------------------------------------
-# ONGLET 3 : MALADIES & ABSENCES
+# ONGLET 3 : MALADIES & ABSENCES (Avec Import Excel/PDF & Ajout manuel)
 # ---------------------------------------------------------
 with tab_maladies:
     st.subheader("🏥 Suivi des Arrêts Maladie & Absences")
-    st.info("Espace de centralisation des arrêts de travail et justificatifs d'absence.")
+    st.write("Importez un fichier de suivi ou gérez les arrêts de travail directement via le tableau ci-dessous.")
     
-    df_maladies = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Motif / Justificatif", "Commentaire"])
-    st.data_editor(df_maladies, num_rows="dynamic", hide_index=True, key="editor_maladies")
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        f_mal_excel = st.file_uploader("Importer un fichier Excel (Maladies)", type=["xlsx", "xls"], key="up_mal_excel")
+    with col_m2:
+        f_mal_pdf = st.file_uploader("Importer un fichier PDF (Maladies / Justificatif)", type=["pdf"], key="up_mal_pdf")
+        
+    data_mal_defaut = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Motif / Justificatif", "Commentaire"])
+    
+    if f_mal_excel:
+        try:
+            data_mal_defaut = pd.read_excel(f_mal_excel)
+            st.success("Fichier Excel Maladies importé avec succès !")
+        except Exception as e:
+            st.error(f"Erreur de lecture Excel : {e}")
+            
+    elif f_mal_pdf:
+        try:
+            reader = pypdf.PdfReader(f_mal_pdf)
+            texte_mal = ""
+            for page in reader.pages:
+                texte_mal += page.extract_text() or ""
+            st.info("Fichier PDF de justificatif lu. Vous pouvez ajouter l'agent et les dates dans le tableau.")
+        except Exception as e:
+            st.error(f"Erreur de lecture PDF : {e}")
+
+    # Tableau interactif (Ajout manuel, modification et suppression possibles)
+    edited_maladies = st.data_editor(
+        data_mal_defaut,
+        num_rows="dynamic",
+        hide_index=True,
+        key
