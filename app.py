@@ -145,6 +145,7 @@ with tab_dispo:
         return matches >= 1
 
     if fichiers_planning:
+        logs_debug.append(f"📁 Nombre de fichiers PDF détectés : {len(fichiers_planning)}")
         for fichier in fichiers_planning:
             match_semaine = re.search(r'S([0-9]{1,2})', fichier.name.upper())
             
@@ -157,15 +158,18 @@ with tab_dispo:
                 else:
                     semaines_a_traiter = [43, 44]
 
+            logs_debug.append(f"📄 Traitement du fichier : {fichier.name} pour les semaines {semaines_a_traiter}")
+
             try:
                 reader = pypdf.PdfReader(fichier)
                 texte_par_page = []
-                for page in reader.pages:
+                for page_idx, page in enumerate(reader.pages):
                     t = page.extract_text(extraction_mode="layout") or page.extract_text()
                     if t:
                         texte_par_page.append(t)
                 
                 texte_global = "\n".join(texte_par_page)
+                logs_debug.append(f"ℹ️ Texte extrait avec succès de {len(reader.pages)} page(s) pour {fichier.name}.")
 
                 for num_semaine in semaines_a_traiter:
                     if semaine_selectionnee != "Les deux" and f"S{num_semaine}" != semaine_selectionnee:
@@ -181,10 +185,12 @@ with tab_dispo:
                     
                     jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
 
+                    agents_trouves_count = 0
                     for ex_agent in df_agents["Agent"].unique():
                         if not noms_sont_compatibles(ex_agent, texte_global):
                             continue
 
+                        agents_trouves_count += 1
                         mots_cles = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 1]
                         lignes_agent = []
                         
@@ -207,7 +213,6 @@ with tab_dispo:
                         source_lignes = lignes_agent if lignes_agent else texte_global.split('\n')
 
                         services_par_date = {}
-                        
                         for line in source_lignes:
                             match_date = re.search(r'\b([0-3]?[0-9])/([0-1]?[0-9])/(?:20[2-3][0-9])?\b', line)
                             hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
@@ -244,41 +249,4 @@ with tab_dispo:
                                     diff = (t2 - t1).total_seconds()
                                     if diff <= 0: diff += 24 * 3600
                                     duree = diff / 3600.0
-                                    if 0.5 <= duree <= 15.0:
-                                        all_extracted_services.append((t1, h1, h2))
-                                except Exception:
-                                    pass
-
-                        all_extracted_services.sort(key=lambda x: x[0])
-                        
-                        for idx, j_target in enumerate(jours_semaine):
-                            if j_target in services_par_date and services_par_date[j_target]:
-                                s_jour = services_par_date[j_target][0]
-                                h1, h2 = s_jour[1], s_jour[2]
-                                dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
-                                dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
-                                if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
-                                semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
-                            elif idx < len(all_extracted_services):
-                                h1, h2 = all_extracted_services[idx][1], all_extracted_services[idx][2]
-                                dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
-                                dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
-                                if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
-                                semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
-                            else:
-                                semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
-
-                        cle_dict = f"{ex_agent}_S{num_semaine}"
-                        planning_agents[cle_dict] = semaine_agent
-
-            except Exception as e:
-                logs_debug.append(f"⚠️ Erreur de lecture sur {fichier.name} : {e}")
-
-    with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
-        for log in logs_debug:
-            st.write(log)
-
-    st.subheader("📋 Liste des Disponibilités & Opportunités")
-
-    tableau_resultats = []
-    tous_agents = df_agents[["Contrat", "Agent"]].drop_duplicates().to_dict(orient="records")
+                                    if 0
