@@ -188,23 +188,34 @@ with tab_dispo:
 
                         mots_cles = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 1]
                         
-                        lignes_agent = []
-                        for block in texte_par_page:
-                            for line in block.split('\n'):
-                                line_upper = line.upper()
-                                if any(m in line_upper for m in mots_cles):
-                                    lignes_agent.append(line)
+                        semaine_agent = {}
+                        for j_target in jours_semaine:
+                            d_obj = datetime.strptime(j_target, '%d/%m/%Y')
+                            # Variantes de formats de date possibles dans les PDF
+                            formats_date = [
+                                j_target,
+                                d_obj.strftime('%d.%m.%Y'),
+                                d_obj.strftime('%d-%m-%Y'),
+                                d_obj.strftime('%d/%m')
+                            ]
 
-                        source_lignes = lignes_agent if lignes_agent else texte_global.split('\n')
+                            # Recherche de la ligne correspondant strictement à l'agent ET au jour ciblé
+                            lignes_jour = []
+                            for block in texte_par_page:
+                                for line in block.split('\n'):
+                                    line_upper = line.upper()
+                                    contient_agent = any(m in line_upper for m in mots_cles)
+                                    contient_date = any(fd.upper() in line_upper for fd in formats_date)
+                                    if contient_agent and contient_date:
+                                        lignes_jour.append(line)
 
-                        # Extraction propre et robuste des paires d'heures (début / fin)
-                        services_agent = []
-                        for line in source_lignes:
-                            hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
-                            if len(hours) >= 2:
-                                # On prend chaque couple consécutif d'heures sur la ligne
-                                for idx_h in range(0, len(hours) - 1, 2):
-                                    h1, h2 = hours[idx_h], hours[idx_h+1]
+                            meilleur_h1, meilleur_h2, meilleure_duree = "00:00", "00:00", 0.0
+                            statut_jour = "REPOS"
+
+                            for line in lignes_jour:
+                                hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
+                                if len(hours) >= 2:
+                                    h1, h2 = hours[0], hours[1]
                                     try:
                                         t1 = datetime.strptime(h1, '%H:%M')
                                         t2 = datetime.strptime(h2, '%H:%M')
@@ -212,32 +223,22 @@ with tab_dispo:
                                         if diff <= 0: diff += 24 * 3600
                                         duree = diff / 3600.0
                                         if 0.5 <= duree <= 15.0:
-                                            services_agent.append((h1, h2, duree))
+                                            meilleur_h1, meilleur_h2, meilleure_duree = h1, h2, duree
+                                            statut_jour = "TRAVAIL"
+                                            break
                                     except Exception:
                                         pass
 
-                        semaine_agent = {}
-                        for idx, j_target in enumerate(jours_semaine):
-                            if idx < len(services_agent):
-                                h1, h2, duree_existante = services_agent[idx]
-                                
-                                dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
-                                dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
-                                if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
+                            dt_deb = datetime.strptime(f"{j_target} {meilleur_h1}", '%d/%m/%Y %H:%M')
+                            dt_fin = datetime.strptime(f"{j_target} {meilleur_h2}", '%d/%m/%Y %H:%M')
+                            if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
 
-                                semaine_agent[j_target] = {
-                                    "statut": "TRAVAIL",
-                                    "heure_fin_reelle": h2,
-                                    "duree_existante": duree_existante,
-                                    "intervalles": [(dt_deb, dt_fin)]
-                                }
-                            else:
-                                semaine_agent[j_target] = {
-                                    "statut": "REPOS",
-                                    "heure_fin_reelle": "00:00",
-                                    "duree_existante": 0.0,
-                                    "intervalles": []
-                                }
+                            semaine_agent[j_target] = {
+                                "statut": statut_jour,
+                                "heure_fin_reelle": meilleur_h2,
+                                "duree_existante": meilleure_duree,
+                                "intervalles": [(dt_deb, dt_fin)]
+                            }
 
                         cle_dict = f"{ex_agent}_S{num_semaine}"
                         planning_agents[cle_dict] = semaine_agent
