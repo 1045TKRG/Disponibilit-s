@@ -180,4 +180,78 @@ with tab_dispo:
                     services_tries = []
                     for line in lignes_texte:
                         hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
-                        if len(hours)
+                        if len(hours) >= 2:
+                            h1, h2 = hours[0], hours[1]
+                            try:
+                                t1 = datetime.strptime(h1, '%H:%M')
+                                t2 = datetime.strptime(h2, '%H:%M')
+                                diff = (t2 - t1).total_seconds()
+                                if diff <= 0: diff += 24 * 3600
+                                duree = diff / 3600.0
+                                if 0.5 <= duree <= 15.0:
+                                    services_tries.append((t1, h1, h2, duree))
+                            except Exception:
+                                pass
+
+                    services_tries.sort(key=lambda x: x[0])
+                    services_uniques = []
+                    seen_intervalles = set()
+                    for s in services_tries:
+                        sig = f"{s[1]}-{s[2]}"
+                        if sig not in seen_intervalles:
+                            seen_intervalles.add(sig)
+                            services_uniques.append((s[1], s[2]))
+
+                    semaine_agent = {}
+                    service_idx = 0
+                    for idx, j_target in enumerate(jours_semaine):
+                        if idx == 4:
+                            semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
+                        else:
+                            if service_idx < len(services_uniques):
+                                h1, h2 = services_uniques[service_idx]
+                                dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
+                                dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
+                                if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
+                                
+                                semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
+                                service_idx += 1
+                            else:
+                                semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
+
+                    if not agents_trouves_dans_pdf:
+                        agents_trouves_dans_pdf = list(df_agents["Agent"].unique())
+
+                    for agent_name in agents_trouves_dans_pdf:
+                        cle_dict = f"{agent_name}_S{num_semaine}"
+                        planning_agents[cle_dict] = semaine_agent
+
+            except Exception as e:
+                logs_debug.append(f"⚠️ Erreur de lecture sur {fichier.name} : {e}")
+
+    with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
+        for log in logs_debug:
+            st.write(log)
+
+    st.subheader("📋 Liste des Disponibilités & Opportunités")
+
+    tableau_resultats = []
+    tous_agents = df_agents[["Contrat", "Agent"]].drop_duplicates().to_dict(orient="records")
+
+    annee_ref = 2026
+    start_target = datetime.fromisocalendar(annee_ref, 43, 1)
+    jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
+
+    for item in tous_agents:
+        contrat_nom = item["Contrat"]
+        agent_nom = item["Agent"]
+        
+        matched_schedule = None
+        for k, sched in planning_agents.items():
+            nom_base = k.rsplit('_S', 1)[0]
+            if noms_sont_compatibles(agent_nom, nom_base):
+                matched_schedule = sched
+                break
+                
+        if not matched_schedule:
+            matched_schedule = {
