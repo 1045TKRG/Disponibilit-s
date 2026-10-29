@@ -227,7 +227,8 @@ with tab_dispo:
                             if service_idx < len(services_uniques):
                                 h1, h2 = services_uniques[service_idx]
                                 
-                                if "SAM" in ex_agent.upper() and h1 == "12:00":
+                                # Correction spécifique pour forcer le début à 07:40 pour l'agent SAM
+                                if "SAM" in ex_agent.upper():
                                     h1 = "07:40"
                                 
                                 dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
@@ -245,9 +246,9 @@ with tab_dispo:
             except Exception as e:
                 logs_debug.append(f"⚠️ Erreur de lecture sur {fichier.name} : {e}")
     else:
-        logs_debug.append("ℹ️ Aucun fichier PDF de planning importé pour le moment. Veuillez importer vos PDF dans le menu de gauche.")
+        logs_debug.append("ℹ️ Aucun fichier PDF de planning importé pour le moment.")
 
-    with st.expander("🔍 Journal de diagnostic des PDF", expanded=True):
+    with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
         for log in logs_debug:
             st.write(log)
 
