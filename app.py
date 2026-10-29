@@ -240,7 +240,7 @@ with tab_dispo:
 
     annee_ref = 2026
     start_target = datetime.fromisocalendar(annee_ref, 43, 1)
-    jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y'] for i in range(7)]
+    jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
 
     for item in tous_agents:
         contrat_nom = item["Contrat"]
@@ -335,7 +335,7 @@ with tab_dispo:
         st.warning("⚠️ Aucun résultat dans le tableau.")
 
 # ---------------------------------------------------------
-# ONGLET 2 : CONGÉS PAYÉS (Avec Import Excel/PDF & Ajout manuel)
+# ONGLET 2 : CONGÉS PAYÉS
 # ---------------------------------------------------------
 with tab_cp:
     st.subheader("🏖️ Suivi des Congés Payés (CP)")
@@ -347,7 +347,6 @@ with tab_cp:
     with col_up2:
         f_cp_pdf = st.file_uploader("Importer un fichier PDF (CP)", type=["pdf"], key="up_cp_pdf")
         
-    # Charger les données initiales ou importées
     data_cp_defaut = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Type de Congé", "Statut"])
     
     if f_cp_excel:
@@ -367,7 +366,6 @@ with tab_cp:
         except Exception as e:
             st.error(f"Erreur de lecture PDF : {e}")
 
-    # Tableau interactif (Ajout manuel, modification et suppression possibles)
     edited_cp = st.data_editor(
         data_cp_defaut,
         num_rows="dynamic",
@@ -382,7 +380,6 @@ with tab_cp:
         }
     )
     
-    # Bouton d'export pour les CP
     if not edited_cp.empty:
         output_cp = BytesIO()
         with pd.ExcelWriter(output_cp, engine='openpyxl') as writer:
@@ -395,7 +392,7 @@ with tab_cp:
         )
 
 # ---------------------------------------------------------
-# ONGLET 3 : MALADIES & ABSENCES (Avec Import Excel/PDF & Ajout manuel)
+# ONGLET 3 : MALADIES & ABSENCES
 # ---------------------------------------------------------
 with tab_maladies:
     st.subheader("🏥 Suivi des Arrêts Maladie & Absences")
@@ -426,9 +423,20 @@ with tab_maladies:
         except Exception as e:
             st.error(f"Erreur de lecture PDF : {e}")
 
-    # Tableau interactif (Ajout manuel, modification et suppression possibles)
     edited_maladies = st.data_editor(
         data_mal_defaut,
         num_rows="dynamic",
         hide_index=True,
-        key
+        key="editor_maladies_interactif"
+    )
+    
+    if not edited_maladies.empty:
+        output_mal = BytesIO()
+        with pd.ExcelWriter(output_mal, engine='openpyxl') as writer:
+            edited_maladies.to_excel(writer, index=False, sheet_name='Maladies_Absences')
+        st.download_button(
+            label="📥 Télécharger le suivi des Maladies (Excel)",
+            data=output_mal.getvalue(),
+            file_name=f"Suivi_Maladies_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
