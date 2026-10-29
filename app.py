@@ -188,11 +188,9 @@ with tab_dispo:
 
                         mots_cles = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 1]
                         
-                        # Association intelligente : pour chaque jour de la semaine, on cherche la ligne spécifique qui contient à la fois le nom de l'agent ET la date du jour
                         semaine_agent = {}
                         for j_target in jours_semaine:
                             d_obj = datetime.strptime(j_target, '%d/%m/%Y')
-                            # Formats de date possibles dans les plannings PDF (ex: 19/10/2026, 19.10, 19 oct, etc.)
                             formats_date = [
                                 j_target,
                                 d_obj.strftime('%d.%m.%Y'),
@@ -211,7 +209,6 @@ with tab_dispo:
                                     if contient_agent and contient_date:
                                         lignes_du_jour.append(line)
 
-                            # Extraction des heures sur la ligne spécifique du jour
                             meilleur_h1, meilleur_h2, meilleure_duree = "00:00", "00:00", 0.0
                             statut_jour = "REPOS"
 
@@ -271,7 +268,7 @@ with tab_dispo:
             start_week1 = jan4 - timedelta(days=jan4.weekday())
             start_target = start_week1 + timedelta(weeks=num_semaine - 1)
         
-        jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y'] for i in range(7)]
+        jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
 
         for item in tous_agents:
             contrat_nom = item["Contrat"]
