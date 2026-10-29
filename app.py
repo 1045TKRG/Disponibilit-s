@@ -185,17 +185,37 @@ with tab_dispo:
                         if not noms_sont_compatibles(ex_agent, texte_global):
                             continue
 
+                        # Extraction rigoureuse des lignes propres à l'agent
                         mots_cles = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 1]
                         lignes_agent = []
-                        for block in texte_par_page:
-                            for line in block.split('\n'):
-                                line_upper = line.upper()
-                                if any(m in line_upper for m in mots_cles):
-                                    lignes_agent.append(line)
-
-                        services_tries = []
-                        source_lignes = lignes_agent if lignes_agent else texte_global.split('\n')
                         
+                        for block in texte_par_page:
+                            lignes_block = block.split('\n')
+                            capturer = False
+                            for i, line in enumerate(lignes_block):
+                                line_upper = line.upper()
+                                # Si on trouve le nom de l'agent sur la ligne
+                                if any(m in line_upper for m in mots_cles):
+                                    capturer = True
+                                    lignes_agent.append(line)
+                                    continue
+                                
+                                # Si on capturait cet agent et qu'on croise un autre nom ou la fin de section, on stoppe
+                                if capturer:
+                                    if any(w.upper() in line_upper for w in ["CONTRAT", "SITE", "TOTAL"]) and not any(m in line_upper for m in mots_cles):
+                                        capturer = False
+                                    else:
+                                        lignes_agent.append(line)
+
+                        # Si aucune ligne ciblée n'est trouvée, on se replie sur le texte global
+                        source_lignes = lignes_agent if lignes_agent else texte_global.split('\n')
+
+                        # Analyse des services jour par jour ou séquentielle
+                        semaine_agent = {}
+                        service_idx = 0
+                        
+                        # On extrait tous les blocs horaires valides trouvés pour cet agent
+                        services_agent_tries = []
                         for line in source_lignes:
                             hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
                             if len(hours) >= 2:
@@ -207,24 +227,14 @@ with tab_dispo:
                                     if diff <= 0: diff += 24 * 3600
                                     duree = diff / 3600.0
                                     if 0.5 <= duree <= 15.0:
-                                        services_tries.append((t1, h1, h2, duree))
+                                        services_agent_tries.append((h1, h2))
                                 except Exception:
                                     pass
 
-                        services_tries.sort(key=lambda x: x[0])
-                        services_uniques = []
-                        seen_intervalles = set()
-                        for s in services_tries:
-                            sig = f"{s[1]}-{s[2]}"
-                            if sig not in seen_intervalles:
-                                seen_intervalles.add(sig)
-                                services_uniques.append((s[1], s[2]))
-
-                        semaine_agent = {}
-                        service_idx = 0
                         for idx, j_target in enumerate(jours_semaine):
-                            if service_idx < len(services_uniques):
-                                h1, h2 = services_uniques[service_idx]
+                            # On ignore le week-end ou on traite selon les index de services trouvés
+                            if service_idx < len(services_agent_tries):
+                                h1, h2 = services_agent_tries[service_idx]
                                 dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
                                 dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
                                 if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
