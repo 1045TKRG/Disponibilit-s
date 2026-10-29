@@ -63,12 +63,14 @@ with tab_dispo:
     st.sidebar.header("📁 Données de la Semaine")
     uploaded_excel = st.sidebar.file_uploader(
         "1. Fichier Référentiel Agents (.xlsx)", 
-        type=["xlsx", "xls"]
+        type=["xlsx", "xls"],
+        key="excel_dispo"
     )
     fichiers_planning = st.sidebar.file_uploader(
         "2. Plannings PDF Comète (Multi-contrats)", 
         type=["pdf"], 
-        accept_multiple_files=True
+        accept_multiple_files=True,
+        key="pdf_dispo"
     )
 
     def charger_referentiel(excel_file):
@@ -105,7 +107,7 @@ with tab_dispo:
         st.error(f"⚠️ {erreur}")
         st.stop()
 
-    semaine_selectionnee = st.sidebar.selectbox("3. Semaine à afficher en priorité", ["S43", "S44", "Les deux"])
+    semaine_selectionnee = st.sidebar.selectbox("3. Semaine à afficher en priorité", ["S43", "S44", "Les deux"], key="semaine_dispo")
 
     def decimal_to_hm(heures_dec):
         h = int(heures_dec)
@@ -155,4 +157,199 @@ with tab_dispo:
                 agents_trouves_dans_pdf = []
                 for ex_agent in df_agents["Agent"].unique():
                     if noms_sont_compatibles(ex_agent, texte_global):
-                        agents_trouves_dans_pdf.append(ex
+                        agents_trouves_dans_pdf.append(ex_agent)
+                
+                logs_debug.append(f"📁 Fichier `{fichier.name}` : {len(agents_trouves_dans_pdf)} agent(s) détecté(s).")
+
+                for num_semaine in semaines_a_traiter:
+                    if semaine_selectionnee != "Les deux" and f"S{num_semaine}" != semaine_selectionnee:
+                        continue
+
+                    annee_ref = 2026
+                    try:
+                        start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
+                    except Exception:
+                        jan4 = datetime(annee_ref, 1, 4)
+                        start_week1 = jan4 - timedelta(days=jan4.weekday())
+                        start_target = start_week1 + timedelta(weeks=num_semaine - 1)
+                    
+                    jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
+                    
+                    services_tries = []
+                    for line in lignes_texte:
+                        if "TOTAL" in line.upper() or len(line) < 4:
+                            continue
+                        
+                        hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
+                        if len(hours) >= 2:
+                            h1, h2 = hours[0], hours[1]
+                            try:
+                                t1 = datetime.strptime(h1, '%H:%M')
+                                t2 = datetime.strptime(h2, '%H:%M')
+                                diff = (t2 - t1).total_seconds()
+                                if diff <= 0: diff += 24 * 3600
+                                duree = diff / 3600.0
+                                
+                                if 1.0 <= duree <= 14.0:
+                                    services_tries.append((t1, h1, h2, duree))
+                            except Exception:
+                                pass
+
+                    services_tries.sort(key=lambda x: x[0])
+
+                    services_uniques = []
+                    seen_intervalles = set()
+                    for s in services_tries:
+                        sig = f"{s[1]}-{s[2]}"
+                        if sig not in seen_intervalles:
+                            seen_intervalles.add(sig)
+                            services_uniques.append((s[1], s[2]))
+
+                    semaine_agent = {}
+                    service_idx = 0
+                    for idx, j_target in enumerate(jours_semaine):
+                        if idx == 4:
+                            semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
+                        else:
+                            if service_idx < len(services_uniques):
+                                h1, h2 = services_uniques[service_idx]
+                                dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
+                                dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
+                                if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
+                                
+                                semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
+                                service_idx += 1
+                            else:
+                                semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
+
+                    for agent_name in agents_trouves_dans_pdf:
+                        cle_dict = f"{agent_name}_S{num_semaine}"
+                        planning_agents[cle_dict] = semaine_agent
+
+            except Exception as e:
+                logs_debug.append(f"⚠️ Erreur de lecture sur {fichier.name} : {e}")
+
+    with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
+        for log in logs_debug:
+            st.write(log)
+
+    st.subheader("📋 Liste des Disponibilités & Opportunités")
+
+    tableau_resultats = []
+    tous_agents = df_agents[["Contrat", "Agent"]].drop_duplicates().to_dict(orient="records")
+
+    annee_ref = 2026
+    start_target = datetime.fromisocalendar(annee_ref, 43, 1)
+    jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
+
+    for item in tous_agents:
+        contrat_nom = item["Contrat"]
+        agent_nom = item["Agent"]
+        
+        matched_schedule = None
+        for k, sched in planning_agents.items():
+            nom_base = k.rsplit('_S', 1)[0]
+            if noms_sont_compatibles(agent_nom, nom_base):
+                matched_schedule = sched
+                break
+                
+        if not matched_schedule:
+            matched_schedule = {j: {"statut": "REPOS", "intervalles": []} for j in jours_defaut}
+
+        dates_triees = sorted(
+            matched_schedule.keys(), 
+            key=lambda x: datetime.strptime(x, '%d/%m/%Y')
+        )
+        jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
+
+        for idx_d, d in enumerate(dates_triees):
+            info_jour = matched_schedule[d]
+            statut = info_jour["statut"]
+            dt_jour = datetime.strptime(d, '%d/%m/%Y')
+            
+            if statut == "REPOS":
+                creneau_texte = "Journée complète (00h00 - 24h00)"
+                if jours_repos_total == 1:
+                    creneau_texte += " — seul jour de repos hebdo"
+                opportunite = "🟢 Jour de Repos"
+            else:
+                intervalles = info_jour["intervalles"]
+                heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
+                
+                if heures_faites >= 10.0:
+                    h_faites_fmt = decimal_to_hm(heures_faites)
+                    creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
+                    opportunite = "🔴 Complet (10h atteint)"
+                else:
+                    derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
+                    heure_debut_str = derniere_fin.strftime('%H:%M')
+                    heures_restantes = max(0.0, 10.0 - heures_faites)
+                    
+                    duree_fmt = decimal_to_hm(heures_restantes)
+                    creneau_texte = f"{duree_fmt} max ce jour (entre {heure_debut_str} à 00:00)"
+                    opportunite = "possibilité de faire travailler l’agent"
+            
+            tableau_resultats.append({
+                "Contrat": contrat_nom,
+                "Agent": agent_nom,
+                "Date": d,
+                "Type d'opportunité": opportunite,
+                "Créneau horaire / Heures possibles": creneau_texte,
+                "Dernier recours": ""
+            })
+
+    if tableau_resultats:
+        df_table = pd.DataFrame(tableau_resultats)
+
+        edited_df = st.data_editor(
+            df_table,
+            column_config={
+                "Dernier recours": st.column_config.TextColumn(
+                    "Dernier recours (Saisie quotidienne)",
+                    help="Saisir manuellement des notes ou commentaires",
+                    max_chars=150
+                )
+            },
+            disabled=["Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
+            hide_index=True,
+            key="editor_dispo"
+        )
+        
+        st.markdown("---")
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.success("✅ Données prêtes à être exportées pour vos justificatifs de planning.")
+        with col2:
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
+            processed_data = output.getvalue()
+            
+            st.download_button(
+                label="📥 Télécharger le rapport (Excel)",
+                data=processed_data,
+                file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+    else:
+        st.warning("⚠️ Aucun résultat dans le tableau.")
+
+# ---------------------------------------------------------
+# ONGLET 2 : CONGÉS PAYÉS
+# ---------------------------------------------------------
+with tab_cp:
+    st.subheader("🏖️ Suivi des Congés Payés (CP)")
+    st.info("Espace de suivi et saisie des demandes de congés payés.")
+    
+    df_cp = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Type de Congé", "Statut"])
+    st.data_editor(df_cp, num_rows="dynamic", hide_index=True, key="editor_cp")
+
+# ---------------------------------------------------------
+# ONGLET 3 : MALADIES & ABSENCES
+# ---------------------------------------------------------
+with tab_maladies:
+    st.subheader("🏥 Suivi des Arrêts Maladie & Absences")
+    st.info("Espace de centralisation des arrêts de travail et justificatifs d'absence.")
+    
+    df_maladies = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Motif / Justificatif", "Commentaire"])
+    st.data_editor(df_maladies, num_rows="dynamic", hide_index=True, key="editor_maladies")
