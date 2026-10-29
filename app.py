@@ -35,9 +35,9 @@ st.set_page_config(
 # Vous pouvez ajouter, modifier ou supprimer des utilisateurs ici.
 # Format : "NomUtilisateur": {"mdp": "MotDePasse", "role": "RH / Superviseur / Agent"}
 UTILISATEURS_AUTORISES = {
-    "admin": {"mdp": "SOS2026", "role": "Superviseur"},
-    "rh1": {"mdp": "MotDePasseRH1", "role": "RH"},
-    "planning": {"mdp": "EquipePlanning2026", "role": "Planificateur"}
+    "admin": {"mdp": "SOS2026", "role": "Administrateur unique"},
+    "TATA Hinerava": {"mdp": "Hinerava2360", "role": "Planificatrice"},
+    "DEZERVILLE Hoania": {"mdp": "Hoania2581", "role": "Planificateur"}
 }
 
 if "authentifie" not in st.session_state:
