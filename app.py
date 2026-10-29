@@ -177,11 +177,9 @@ with tab_dispo:
                     
                     jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
                     
+                    # Extraction robuste des horaires
                     services_tries = []
                     for line in lignes_texte:
-                        if "TOTAL" in line.upper() or len(line) < 4:
-                            continue
-                        
                         hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
                         if len(hours) >= 2:
                             h1, h2 = hours[0], hours[1]
@@ -191,14 +189,12 @@ with tab_dispo:
                                 diff = (t2 - t1).total_seconds()
                                 if diff <= 0: diff += 24 * 3600
                                 duree = diff / 3600.0
-                                
-                                if 1.0 <= duree <= 14.0:
+                                if 0.5 <= duree <= 15.0:
                                     services_tries.append((t1, h1, h2, duree))
                             except Exception:
                                 pass
 
                     services_tries.sort(key=lambda x: x[0])
-
                     services_uniques = []
                     seen_intervalles = set()
                     for s in services_tries:
@@ -224,6 +220,10 @@ with tab_dispo:
                             else:
                                 semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
 
+                    # S'il n'y a pas d'horaires détectés, on considère tous les agents en repos par défaut pour afficher le tableau
+                    if not agents_trouves_dans_pdf:
+                        agents_trouves_dans_pdf = list(df_agents["Agent"].unique())
+
                     for agent_name in agents_trouves_dans_pdf:
                         cle_dict = f"{agent_name}_S{num_semaine}"
                         planning_agents[cle_dict] = semaine_agent
@@ -231,7 +231,7 @@ with tab_dispo:
             except Exception as e:
                 logs_debug.append(f"⚠️ Erreur de lecture sur {fichier.name} : {e}")
 
-    with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
+    with st.expander("🔍 Journal de diagnostic des PDF", expanded=True):
         for log in logs_debug:
             st.write(log)
 
@@ -276,4 +276,129 @@ with tab_dispo:
                 opportunite = "🟢 Jour de Repos"
             else:
                 intervalles = info_jour["intervalles"]
-                heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles])
+                heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
+                
+                if heures_faites >= 10.0:
+                    h_faites_fmt = decimal_to_hm(heures_faites)
+                    creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
+                    opportunite = "🔴 Complet (10h atteint)"
+                else:
+                    derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
+                    heure_debut_str = derniere_fin.strftime('%H:%M')
+                    heures_restantes = max(0.0, 10.0 - heures_faites)
+                    
+                    duree_fmt = decimal_to_hm(heures_restantes)
+                    creneau_texte = f"{duree_fmt} max ce jour (entre {heure_debut_str} à 00:00)"
+                    opportunite = "possibilité de faire travailler l’agent"
+            
+            tableau_resultats.append({
+                "Contrat": contrat_nom,
+                "Agent": agent_nom,
+                "Date": d,
+                "Type d'opportunité": opportunite,
+                "Créneau horaire / Heures possibles": creneau_texte,
+                "Dernier recours": ""
+            })
+
+    if tableau_resultats:
+        df_table = pd.DataFrame(tableau_resultats)
+
+        edited_df = st.data_editor(
+            df_table,
+            column_config={
+                "Dernier recours": st.column_config.TextColumn(
+                    "Dernier recours (Saisie quotidienne)",
+                    help="Saisir manuellement des notes ou commentaires",
+                    max_chars=150
+                )
+            },
+            disabled=["Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
+            hide_index=True,
+            key="editor_dispo"
+        )
+        
+        st.markdown("---")
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.success("✅ Données prêtes à être exportées pour vos justificatifs de planning.")
+        with col2:
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
+            processed_data = output.getvalue()
+            
+            st.download_button(
+                label="📥 Télécharger le rapport (Excel)",
+                data=processed_data,
+                file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+    else:
+        st.warning("⚠️ Aucun résultat dans le tableau.")
+
+# ---------------------------------------------------------
+# ONGLET 2 : CONGÉS PAYÉS & ANALYSES
+# ---------------------------------------------------------
+with tab_cp:
+    st.subheader("🏖️ Suivi des Congés Payés (CP) & Tableau d'Analyse")
+    col_up1, col_up2 = st.columns(2)
+    with col_up1:
+        f_cp_excel = st.file_uploader("Importer un fichier Excel (CP)", type=["xlsx", "xls"], key="up_cp_excel")
+    with col_up2:
+        f_cp_pdf = st.file_uploader("Importer un fichier PDF (CP)", type=["pdf"], key="up_cp_pdf")
+        
+    data_cp_defaut = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Type de Congé", "Statut"])
+    if f_cp_excel:
+        try:
+            data_cp_defaut = pd.read_excel(f_cp_excel)
+        except Exception as e:
+            st.error(f"Erreur : {e}")
+
+    edited_cp = st.data_editor(
+        data_cp_defaut,
+        num_rows="dynamic",
+        hide_index=True,
+        key="editor_cp_interactif",
+        column_config={
+            "Statut": st.column_config.SelectboxColumn(
+                "Statut",
+                options=["Demandé", "Validé", "Refusé"],
+                required=True
+            )
+        }
+    )
+    
+    st.markdown("---")
+    st.subheader("📊 Tableau d'Analyse — Congés Payés")
+    if not edited_cp.empty and "Statut" in edited_cp.columns:
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("Total Demandes CP", len(edited_cp))
+        col_m2.metric("Congés Validés", len(edited_cp[edited_cp["Statut"] == "Validé"]))
+        col_m3.metric("En attente", len(edited_cp[edited_cp["Statut"] == "Demandé"]))
+        
+        df_analyse_cp = edited_cp["Statut"].value_counts().reset_index()
+        df_analyse_cp.columns = ["Statut", "Nombre"]
+        st.dataframe(df_analyse_cp, hide_index=True)
+        st.bar_chart(df_analyse_cp.set_index("Statut"))
+    else:
+        st.info("Ajoutez des données dans le tableau ci-dessus pour afficher l'analyse.")
+
+    if not edited_cp.empty:
+        output_cp = BytesIO()
+        with pd.ExcelWriter(output_cp, engine='openpyxl') as writer:
+            edited_cp.to_excel(writer, index=False, sheet_name='Conges_Payes')
+        st.download_button(
+            label="📥 Télécharger le suivi des CP (Excel)",
+            data=output_cp.getvalue(),
+            file_name=f"Suivi_Conges_Payes_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+# ---------------------------------------------------------
+# ONGLET 3 : MALADIES & ANALYSES
+# ---------------------------------------------------------
+with tab_maladies:
+    st.subheader("🏥 Suivi des Arrêts Maladie & Tableau d'Analyse")
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        f_mal_excel =
