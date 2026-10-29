@@ -179,43 +179,69 @@ with tab_dispo:
                         start_week1 = jan4 - timedelta(days=jan4.weekday())
                         start_target = start_week1 + timedelta(weeks=num_semaine - 1)
                     
+                    jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y'] for i in range(7)]
+                    # Correction du format de date si besoin
                     jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
 
                     for ex_agent in df_agents["Agent"].unique():
                         if not noms_sont_compatibles(ex_agent, texte_global):
                             continue
 
-                        # Extraction rigoureuse des lignes propres à l'agent
                         mots_cles = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 1]
                         lignes_agent = []
                         
                         for block in texte_par_page:
                             lignes_block = block.split('\n')
                             capturer = False
-                            for i, line in enumerate(lignes_block):
+                            for line in lignes_block:
                                 line_upper = line.upper()
-                                # Si on trouve le nom de l'agent sur la ligne
                                 if any(m in line_upper for m in mots_cles):
                                     capturer = True
                                     lignes_agent.append(line)
                                     continue
                                 
-                                # Si on capturait cet agent et qu'on croise un autre nom ou la fin de section, on stoppe
                                 if capturer:
                                     if any(w.upper() in line_upper for w in ["CONTRAT", "SITE", "TOTAL"]) and not any(m in line_upper for m in mots_cles):
                                         capturer = False
                                     else:
                                         lignes_agent.append(line)
 
-                        # Si aucune ligne ciblée n'est trouvée, on se replie sur le texte global
                         source_lignes = lignes_agent if lignes_agent else texte_global.split('\n')
 
-                        # Analyse des services jour par jour ou séquentielle
-                        semaine_agent = {}
-                        service_idx = 0
+                        # Dictionnaire pour stocker les services par date exacte trouvée dans la ligne
+                        services_par_date = {}
                         
-                        # On extrait tous les blocs horaires valides trouvés pour cet agent
-                        services_agent_tries = []
+                        for line in source_lignes:
+                            # Recherche d'une date au format JJ/MM/AAAA ou JJ/MM dans la ligne
+                            match_date = re.search(r'\b([0-3]?[0-9])/([0-1]?[0-9])/(?:20[2-3][0-9])?\b', line)
+                            hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
+                            
+                            if len(hours) >= 2:
+                                h1, h2 = hours[0], hours[1]
+                                try:
+                                    t1 = datetime.strptime(h1, '%H:%M')
+                                    t2 = datetime.strptime(h2, '%H:%M')
+                                    diff = (t2 - t1).total_seconds()
+                                    if diff <= 0: diff += 24 * 3600
+                                    duree = diff / 3600.0
+                                    if 0.5 <= duree <= 15.0:
+                                        if match_date:
+                                            # On reconstitue la date avec l'année de référence si l'année est courte
+                                            j_str = match_date.group(1).zfill(2)
+                                            m_str = match_date.group(2).zfill(2)
+                                            date_trouvee = f"{j_str}/{m_str}/{annee_ref}"
+                                            if date_trouvee in jours_semaine:
+                                                if date_trouvee not in services_par_date:
+                                                    services_par_date[date_trouvee] = []
+                                                services_par_date[date_trouvee].append((t1, h1, h2, duree))
+                                except Exception:
+                                    pass
+
+                        # Construction du planning de la semaine pour l'agent
+                        semaine_agent = {}
+                        
+                        # Si aucune date précise n'a été liée par ligne, on applique une correspondance séquentielle propre
+                        all_extracted_services = []
                         for line in source_lignes:
                             hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
                             if len(hours) >= 2:
@@ -227,20 +253,30 @@ with tab_dispo:
                                     if diff <= 0: diff += 24 * 3600
                                     duree = diff / 3600.0
                                     if 0.5 <= duree <= 15.0:
-                                        services_agent_tries.append((h1, h2))
+                                        all_extracted_services.append((t1, h1, h2))
                                 except Exception:
                                     pass
 
+                        # Tri chronologique des services extraits pour éviter les décalages
+                        all_extracted_services.sort(key=lambda x: x[0])
+                        
+                        # On mappe jour par jour
                         for idx, j_target in enumerate(jours_semaine):
-                            # On ignore le week-end ou on traite selon les index de services trouvés
-                            if service_idx < len(services_agent_tries):
-                                h1, h2 = services_agent_tries[service_idx]
+                            if j_target in services_par_date and services_par_date[j_target]:
+                                # S'il y a un service explicitement lié à cette date
+                                s_jour = services_par_date[j_target][0]
+                                h1, h2 = s_jour[1], s_jour[2]
                                 dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
                                 dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
                                 if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
-                                
                                 semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
-                                service_idx += 1
+                            elif idx < len(all_extracted_services):
+                                # Fallback séquentiel strict
+                                h1, h2 = all_extracted_services[idx][1], all_extracted_services[idx][2]
+                                dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
+                                dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
+                                if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
+                                semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
                             else:
                                 semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
 
