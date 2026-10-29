@@ -183,7 +183,6 @@ with tab_dispo:
                             if any(m in line_upper for m in mots_cles):
                                 lignes_agent.append(line)
 
-                    # Extraction propre des paires d'heures sur les lignes de l'agent
                     vacations_par_jour = {i: [] for i in range(7)}
                     idx_j = 0
                     
@@ -256,4 +255,85 @@ with tab_dispo:
             matched_schedule = planning_agents.get(cle_dict)
                     
             if not matched_schedule:
-                matched_schedule = {j: {"statut": "REPOS", "heure_fin
+                matched_schedule = {j: {"statut": "REPOS", "heure_fin_reelle": "00:00", "duree_existante": 0.0} for j in jours_defaut}
+
+            dates_triees = sorted(matched_schedule.keys(), key=lambda x: datetime.strptime(x, '%d/%m/%Y'))
+            jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
+
+            for d in dates_triees:
+                info_jour = matched_schedule[d]
+                statut = info_jour["statut"]
+                
+                if statut == "REPOS":
+                    creneau_texte = "Journée complète (00h00 - 24h00)"
+                    if jours_repos_total == 1:
+                        creneau_texte += " — seul jour de repos hebdo"
+                    opportunite = "🟢 Jour de Repos"
+                else:
+                    duree_existante = info_jour["duree_existante"]
+                    heure_fin = info_jour["heure_fin_reelle"]
+                    
+                    if duree_existante >= 10.0:
+                        h_faites_fmt = decimal_to_hm(duree_existante)
+                        creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
+                        opportunite = "🔴 Complet (10h atteint)"
+                    else:
+                        heures_restantes = max(0.0, 10.0 - duree_existante)
+                        duree_fmt = decimal_to_hm(heures_restantes)
+                        creneau_texte = f"{duree_fmt} max ce jour (entre {heure_fin} à 00:00)"
+                        opportunite = "possibilité de faire travailler l’agent"
+                
+                tableau_resultats.append({
+                    "Semaine": f"S{num_semaine}",
+                    "Contrat": contrat_nom,
+                    "Agent": agent_nom,
+                    "Date": d,
+                    "Type d'opportunité": opportunite,
+                    "Créneau horaire / Heures possibles": creneau_texte,
+                    "Dernier recours": ""
+                })
+
+    if tableau_resultats:
+        df_table = pd.DataFrame(tableau_resultats)
+        edited_df = st.data_editor(
+            df_table,
+            column_config={
+                "Dernier recours": st.column_config.TextColumn(
+                    "Dernier recours (Saisie quotidienne)",
+                    max_chars=150
+                )
+            },
+            disabled=["Semaine", "Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
+            hide_index=True,
+            key="editor_dispo"
+        )
+        
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
+        
+        st.download_button(
+            label="📥 Télécharger le rapport (Excel)",
+            data=output.getvalue(),
+            file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+# ---------------------------------------------------------
+# AUTRES ONGLETS (CP & Maladies standards)
+# ---------------------------------------------------------
+with tab_cp:
+    st.subheader("🏖️ Suivi des Congés Payés (CP)")
+    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Type de Congé", "Statut"]), num_rows="dynamic", key="cp_simple")
+
+with tab_maladies:
+    st.subheader("🏥 Suivi des Arrêts Maladie")
+    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Motif", "Commentaire"]), num_rows="dynamic", key="mal_simple")
+
+with tab_cp_fin:
+    st.subheader("🎄 CP Fêtes de Fin d'Année")
+    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année"]), num_rows="dynamic", key="cp5_simple")
+
+with tab_maladies_fin:
+    st.subheader("🎄 Maladies Fêtes de Fin d'Année")
+    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année", "Motif"]), num_rows="dynamic", key="mal5_simple")
