@@ -219,26 +219,26 @@ with tab_dispo:
                             sig = f"{s[1]}-{s[2]}"
                             if sig not in seen_intervalles:
                                 seen_intervalles.add(sig)
-                                services_uniques.append((s[1], s[2]))
+                                services_uniques.append((s[1], s[2], s[3]))
 
                         semaine_agent = {}
                         service_idx = 0
                         for idx, j_target in enumerate(jours_semaine):
                             if service_idx < len(services_uniques):
-                                h1, h2 = services_uniques[service_idx]
-                                
-                                # Correction spécifique pour forcer le début à 07:40 pour l'agent SAM
-                                if "SAM" in ex_agent.upper():
-                                    h1 = "07:40"
+                                h1, h2, duree_existante = services_uniques[service_idx]
                                 
                                 dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
                                 dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
                                 if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
                                 
-                                semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
+                                semaine_agent[j_target] = {
+                                    "statut": "TRAVAIL", 
+                                    "intervalles": [(dt_deb, dt_fin)],
+                                    "duree_existante": duree_existante
+                                }
                                 service_idx += 1
                             else:
-                                semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
+                                semaine_agent[j_target] = {"statut": "REPOS", "intervalles": [], "duree_existante": 0.0}
 
                         cle_dict = f"{ex_agent}_S{num_semaine}"
                         planning_agents[cle_dict] = semaine_agent
@@ -278,7 +278,7 @@ with tab_dispo:
             matched_schedule = planning_agents.get(cle_dict)
                     
             if not matched_schedule:
-                matched_schedule = {j: {"statut": "REPOS", "intervalles": []} for j in jours_defaut}
+                matched_schedule = {j: {"statut": "REPOS", "intervalles": [], "duree_existante": 0.0} for j in jours_defaut}
 
             dates_triees = sorted(
                 list(matched_schedule.keys()), 
@@ -298,18 +298,20 @@ with tab_dispo:
                     opportunite = "🟢 Jour de Repos"
                 else:
                     intervalles = info_jour["intervalles"]
-                    heures_faites = sum((iv[1] - iv[0]).total_seconds() for iv in intervalles) / 3600.0
+                    duree_existante = info_jour["duree_existante"]
                     
-                    if heures_faites >= 10.0:
-                        h_faites_fmt = decimal_to_hm(heures_faites)
+                    if duree_existante >= 10.0:
+                        h_faites_fmt = decimal_to_hm(duree_existante)
                         creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
                         opportunite = "🔴 Complet (10h atteint)"
                     else:
                         derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
                         heure_debut_str = derniere_fin.strftime('%H:%M')
-                        heures_restantes = max(0.0, 10.0 - heures_faites)
                         
+                        # Calcul strict du reste pour atteindre exactement 10h max
+                        heures_restantes = max(0.0, 10.0 - duree_existante)
                         duree_fmt = decimal_to_hm(heures_restantes)
+                        
                         creneau_texte = f"{duree_fmt} max ce jour (entre {heure_debut_str} à 00:00)"
                         opportunite = "possibilité de faire travailler l’agent"
                 
