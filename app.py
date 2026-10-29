@@ -49,7 +49,7 @@ with col_deco:
 
 st.markdown("---")
 
-# Création des onglets (avec les 2 nouveaux onglets Fêtes de fin d'année)
+# Création des onglets
 tab_dispo, tab_cp, tab_maladies, tab_cp_fin, tab_maladies_fin = st.tabs([
     "📋 Disponibilités & Remplacements", 
     "🏖️ Congés Payés & Analyses", 
@@ -276,19 +276,4 @@ with tab_dispo:
                 opportunite = "🟢 Jour de Repos"
             else:
                 intervalles = info_jour["intervalles"]
-                heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
-                
-                if heures_faites >= 10.0:
-                    h_faites_fmt = decimal_to_hm(heures_faites)
-                    creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
-                    opportunite = "🔴 Complet (10h atteint)"
-                else:
-                    derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
-                    heure_debut_str = derniere_fin.strftime('%H:%M')
-                    heures_restantes = max(0.0, 10.0 - heures_faites)
-                    
-                    duree_fmt = decimal_to_hm(heures_restantes)
-                    creneau_texte = f"{duree_fmt} max ce jour (entre {heure_debut_str} à 00:00)"
-                    opportunite = "possibilité de faire travailler l’agent"
-            
-            tableau
+                heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles])
