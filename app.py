@@ -162,7 +162,7 @@ with tab_dispo:
         matches = sum(1 for mot in mots_excel if mot in p_upper)
         return matches >= 1
 
-    if fichiers_planning:
+ if fichiers_planning:
         for fichier in fichiers_planning:
             match_semaine = re.search(r'S([0-9]{1,2})', fichier.name.upper())
             
@@ -177,23 +177,13 @@ with tab_dispo:
 
             try:
                 reader = pypdf.PdfReader(fichier)
-                lignes_texte = []
+                texte_par_page = []
                 for page in reader.pages:
                     t = page.extract_text(extraction_mode="layout") or page.extract_text()
                     if t:
-                        for l in t.split('\n'):
-                            l_clean = l.strip()
-                            if l_clean:
-                                lignes_texte.append(l_clean)
+                        texte_par_page.append(t)
                 
-                texte_global = "\n".join(lignes_texte)
-                
-                agents_trouves_dans_pdf = []
-                for ex_agent in df_agents["Agent"].unique():
-                    if noms_sont_compatibles(ex_agent, texte_global):
-                        agents_trouves_dans_pdf.append(ex_agent)
-                
-                logs_debug.append(f"📁 Fichier `{fichier.name}` : {len(agents_trouves_dans_pdf)} agent(s) détecté(s).")
+                texte_global = "\n".join(texte_par_page)
 
                 for num_semaine in semaines_a_traiter:
                     if semaine_selectionnee != "Les deux" and f"S{num_semaine}" != semaine_selectionnee:
@@ -208,38 +198,54 @@ with tab_dispo:
                         start_target = start_week1 + timedelta(weeks=num_semaine - 1)
                     
                     jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
-                    
-                    services_tries = []
-                    for line in lignes_texte:
-                        hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
-                        if len(hours) >= 2:
-                            h1, h2 = hours[0], hours[1]
-                            try:
-                                t1 = datetime.strptime(h1, '%H:%M')
-                                t2 = datetime.strptime(h2, '%H:%M')
-                                diff = (t2 - t1).total_seconds()
-                                if diff <= 0: diff += 24 * 3600
-                                duree = diff / 3600.0
-                                if 0.5 <= duree <= 15.0:
-                                    services_tries.append((t1, h1, h2, duree))
-                            except Exception:
-                                pass
 
-                    services_tries.sort(key=lambda x: x[0])
-                    services_uniques = []
-                    seen_intervalles = set()
-                    for s in services_tries:
-                        sig = f"{s[1]}-{s[2]}"
-                        if sig not in seen_intervalles:
-                            seen_intervalles.add(sig)
-                            services_uniques.append((s[1], s[2]))
+                    # Parcours agent par agent dans le référentiel Excel
+                    for ex_agent in df_agents["Agent"].unique():
+                        # On vérifie si l'agent est présent dans ce PDF
+                        if not noms_sont_compatibles(ex_agent, texte_global):
+                            continue
 
-                    semaine_agent = {}
-                    service_idx = 0
-                    for idx, j_target in enumerate(jours_semaine):
-                        if idx == 4:
-                            semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
-                        else:
+                        # Extraction des lignes spécifiques à cet agent dans le PDF
+                        mots_cles = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 1]
+                        lignes_agent = []
+                        for block in texte_par_page:
+                            for line in block.split('\n'):
+                                line_upper = line.upper()
+                                if any(m in line_upper for m in mots_cles):
+                                    lignes_agent.append(line)
+
+                        # Analyse des heures uniques pour cet agent spécifique
+                        services_tries = []
+                        source_lignes = lignes_agent if lignes_agent else texte_global.split('\n')
+                        
+                        for line in source_lignes:
+                            hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
+                            if len(hours) >= 2:
+                                h1, h2 = hours[0], hours[1]
+                                try:
+                                    t1 = datetime.strptime(h1, '%H:%M')
+                                    t2 = datetime.strptime(h2, '%H:%M')
+                                    diff = (t2 - t1).total_seconds()
+                                    if diff <= 0: diff += 24 * 3600
+                                    duree = diff / 3600.0
+                                    if 0.5 <= duree <= 15.0:
+                                        services_tries.append((t1, h1, h2, duree))
+                                except Exception:
+                                    pass
+
+                        services_tries.sort(key=lambda x: x[0])
+                        services_uniques = []
+                        seen_intervalles = set()
+                        for s in services_tries:
+                            sig = f"{s[1]}-{s[2]}"
+                            if sig not in seen_intervalles:
+                                seen_intervalles.add(sig)
+                                services_uniques.append((s[1], s[2]))
+
+                        # Affectation du planning de la semaine pour cet agent
+                        semaine_agent = {}
+                        service_idx = 0
+                        for idx, j_target in enumerate(jours_semaine):
                             if service_idx < len(services_uniques):
                                 h1, h2 = services_uniques[service_idx]
                                 dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
@@ -251,11 +257,7 @@ with tab_dispo:
                             else:
                                 semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
 
-                    if not agents_trouves_dans_pdf:
-                        agents_trouves_dans_pdf = list(df_agents["Agent"].unique())
-
-                    for agent_name in agents_trouves_dans_pdf:
-                        cle_dict = f"{agent_name}_S{num_semaine}"
+                        cle_dict = f"{ex_agent}_S{num_semaine}"
                         planning_agents[cle_dict] = semaine_agent
 
             except Exception as e:
