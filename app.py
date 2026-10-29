@@ -15,25 +15,57 @@ st.set_page_config(
 # ---------------------------------------------------------
 # SÉCURITÉ : SYSTÈME DE MOT DE PASSE
 # ---------------------------------------------------------
-MOT_DE_PASSE_CORRECT = "SOS2026"  # <--- Changez ce mot de passe ici
+import streamlit as st
+import pandas as pd
+import pypdf
+import re
+from datetime import datetime, timedelta
+from io import BytesIO
+
+# Configuration de la page
+st.set_page_config(
+    page_title="SOS Remplacement - Portails RH",
+    page_icon="🔒",
+    layout="wide"
+)
+
+# ---------------------------------------------------------
+# SÉCURITÉ : GESTION DES UTILISATEURS & MOTS DE PASSE
+# ---------------------------------------------------------
+# Vous pouvez ajouter, modifier ou supprimer des utilisateurs ici.
+# Format : "NomUtilisateur": {"mdp": "MotDePasse", "role": "RH / Superviseur / Agent"}
+UTILISATEURS_AUTORISES = {
+    "admin": {"mdp": "SOS2026", "role": "Superviseur"},
+    "rh1": {"mdp": "MotDePasseRH1", "role": "RH"},
+    "planning": {"mdp": "EquipePlanning2026", "role": "Planificateur"}
+}
 
 if "authentifie" not in st.session_state:
     st.session_state["authentifie"] = False
+if "utilisateur_connecte" not in st.session_state:
+    st.session_state["utilisateur_connecte"] = ""
+if "role_utilisateur" not in st.session_state:
+    st.session_state["role_utilisateur"] = ""
 
 if not st.session_state["authentifie"]:
     st.title("🔒 Accès Sécurisé — Portail RH & Plannings")
-    st.write("Ce portail contient des données confidentielles. Veuillez saisir le mot de passe d'accès.")
+    st.write("Veuillez vous identifier avec vos identifiants professionnels.")
     
-    mdp_saisi = st.text_input("Mot de passe :", type="password")
-    
-    if st.button("Se connecter"):
-        if mdp_saisi == MOT_DE_PASSE_CORRECT:
-            st.session_state["authentifie"] = True
-            st.success("Accès autorisé.")
-            st.rerun()
-        else:
-            st.error("Mot de passe incorrect. Accès refusé.")
-            
+    with st.form("form_connexion"):
+        username_saisi = st.text_input("Identifiant :").strip().lower()
+        password_saisi = st.text_input("Mot de passe :", type="password")
+        submit_btn = st.form_submit_button("Se connecter")
+        
+        if submit_btn:
+            if username_saisi in UTILISATEURS_AUTORISES and UTILISATEURS_AUTORISES[username_saisi]["mdp"] == password_saisi:
+                st.session_state["authentifie"] = True
+                st.session_state["utilisateur_connecte"] = username_saisi
+                st.session_state["role_utilisateur"] = UTILISATEURS_AUTORISES[username_saisi]["role"]
+                st.success(f"Connexion réussie. Bienvenue, {username_saisi.capitalize()} !")
+                st.rerun()
+            else:
+                st.error("Identifiant ou mot de passe incorrect.")
+                
     st.stop()
 
 # ---------------------------------------------------------
