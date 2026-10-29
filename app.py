@@ -121,12 +121,14 @@ with tab_dispo:
     logs_debug = []
 
     def noms_sont_compatibles(excel_name, pdf_text):
-        e_words = [w.upper() for w in re.findall(r'\w+', excel_name) if len(w) > 2]
-        p_text_upper = pdf_text.upper()
-        if not e_words:
-            return excel_name.upper() in p_text_upper
-        matches = sum(1 for word in e_words if word in p_text_upper)
-        return matches >= min(len(e_words), 1)
+        # Nettoyage ultra-souple pour matcher le nom peu importe l'ordre (ex: "Monique Lissé" vs "Lissé AH SAM Monique")
+        mots_excel = [w.upper() for w in re.findall(r'\w+', excel_name) if len(w) > 1]
+        p_upper = pdf_text.upper()
+        if not mots_excel:
+            return False
+        # Si au moins un mot significatif (nom ou prénom) est présent dans le texte du PDF
+        matches = sum(1 for mot in mots_excel if mot in p_upper)
+        return matches >= 1
 
     if fichiers_planning:
         for fichier in fichiers_planning:
@@ -227,4 +229,253 @@ with tab_dispo:
                         planning_agents[cle_dict] = semaine_agent
 
             except Exception as e:
-                logs_debug
+                logs_debug.append(f"⚠️ Erreur de lecture sur {fichier.name} : {e}")
+
+    with st.expander("🔍 Journal de diagnostic des PDF", expanded=True):
+        for log in logs_debug:
+            st.write(log)
+
+    st.subheader("📋 Liste des Disponibilités & Opportunités")
+
+    tableau_resultats = []
+    tous_agents = df_agents[["Contrat", "Agent"]].drop_duplicates().to_dict(orient="records")
+
+    annee_ref = 2026
+    start_target = datetime.fromisocalendar(annee_ref, 43, 1)
+    jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
+
+    for item in tous_agents:
+        contrat_nom = item["Contrat"]
+        agent_nom = item["Agent"]
+        
+        matched_schedule = None
+        for k, sched in planning_agents.items():
+            nom_base = k.rsplit('_S', 1)[0]
+            if noms_sont_compatibles(agent_nom, nom_base):
+                matched_schedule = sched
+                break
+                
+        if not matched_schedule:
+            matched_schedule = {j: {"statut": "REPOS", "intervalles": []} for j in jours_defaut}
+
+        dates_triees = sorted(
+            matched_schedule.keys(), 
+            key=lambda x: datetime.strptime(x, '%d/%m/%Y')
+        )
+        jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
+
+        for idx_d, d in enumerate(dates_triees):
+            info_jour = matched_schedule[d]
+            statut = info_jour["statut"]
+            dt_jour = datetime.strptime(d, '%d/%m/%Y')
+            
+            if statut == "REPOS":
+                creneau_texte = "Journée complète (00h00 - 24h00)"
+                if jours_repos_total == 1:
+                    creneau_texte += " — seul jour de repos hebdo"
+                opportunite = "🟢 Jour de Repos"
+            else:
+                intervalles = info_jour["intervalles"]
+                heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
+                
+                if heures_faites >= 10.0:
+                    h_faites_fmt = decimal_to_hm(heures_faites)
+                    creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
+                    opportunite = "🔴 Complet (10h atteint)"
+                else:
+                    derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
+                    heure_debut_str = derniere_fin.strftime('%H:%M')
+                    heures_restantes = max(0.0, 10.0 - heures_faites)
+                    
+                    duree_fmt = decimal_to_hm(heures_restantes)
+                    creneau_texte = f"{duree_fmt} max ce jour (entre {heure_debut_str} à 00:00)"
+                    opportunite = "possibilité de faire travailler l’agent"
+            
+            tableau_resultats.append({
+                "Contrat": contrat_nom,
+                "Agent": agent_nom,
+                "Date": d,
+                "Type d'opportunité": opportunite,
+                "Créneau horaire / Heures possibles": creneau_texte,
+                "Dernier recours": ""
+            })
+
+    if tableau_resultats:
+        df_table = pd.DataFrame(tableau_resultats)
+
+        edited_df = st.data_editor(
+            df_table,
+            column_config={
+                "Dernier recours": st.column_config.TextColumn(
+                    "Dernier recours (Saisie quotidienne)",
+                    help="Saisir manuellement des notes ou commentaires",
+                    max_chars=150
+                )
+            },
+            disabled=["Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
+            hide_index=True,
+            key="editor_dispo"
+        )
+        
+        st.markdown("---")
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.success("✅ Données prêtes à être exportées pour vos justificatifs de planning.")
+        with col2:
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
+            processed_data = output.getvalue()
+            
+            st.download_button(
+                label="📥 Télécharger le rapport (Excel)",
+                data=processed_data,
+                file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+    else:
+        st.warning("⚠️ Aucun résultat dans le tableau.")
+
+# ---------------------------------------------------------
+# ONGLET 2 : CONGÉS PAYÉS & ANALYSES
+# ---------------------------------------------------------
+with tab_cp:
+    st.subheader("🏖️ Suivi des Congés Payés (CP) & Tableau d'Analyse")
+    st.write("Gérez vos congés et visualisez instantanément les analyses ci-dessous.")
+    
+    col_up1, col_up2 = st.columns(2)
+    with col_up1:
+        f_cp_excel = st.file_uploader("Importer un fichier Excel (CP)", type=["xlsx", "xls"], key="up_cp_excel")
+    with col_up2:
+        f_cp_pdf = st.file_uploader("Importer un fichier PDF (CP)", type=["pdf"], key="up_cp_pdf")
+        
+    data_cp_defaut = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Type de Congé", "Statut"])
+    
+    if f_cp_excel:
+        try:
+            data_cp_defaut = pd.read_excel(f_cp_excel)
+            st.success("Fichier Excel CP importé avec succès !")
+        except Exception as e:
+            st.error(f"Erreur de lecture Excel : {e}")
+            
+    elif f_cp_pdf:
+        try:
+            reader = pypdf.PdfReader(f_cp_pdf)
+            for page in reader.pages:
+                pass
+            st.info("Fichier PDF lu. Vous pouvez compléter ou vérifier les informations dans le tableau.")
+        except Exception as e:
+            st.error(f"Erreur de lecture PDF : {e}")
+
+    edited_cp = st.data_editor(
+        data_cp_defaut,
+        num_rows="dynamic",
+        hide_index=True,
+        key="editor_cp_interactif",
+        column_config={
+            "Statut": st.column_config.SelectboxColumn(
+                "Statut",
+                options=["Demandé", "Validé", "Refusé"],
+                required=True
+            )
+        }
+    )
+    
+    st.markdown("---")
+    st.subheader("📊 Tableau d'Analyse — Congés Payés")
+    
+    if not edited_cp.empty and "Statut" in edited_cp.columns:
+        col_m1, col_m2, col_m3 = st.columns(3)
+        total_cp = len(edited_cp)
+        valides_cp = len(edited_cp[edited_cp["Statut"] == "Validé"])
+        demandes_cp = len(edited_cp[edited_cp["Statut"] == "Demandé"])
+        
+        col_m1.metric("Total Demandes CP", total_cp)
+        col_m2.metric("Congés Validés", valides_cp)
+        col_m3.metric("En attente", demandes_cp)
+        
+        st.write("##### Répartition par Statut :")
+        if "Statut" in edited_cp.columns:
+            df_analyse_cp = edited_cp["Statut"].value_counts().reset_index()
+            df_analyse_cp.columns = ["Statut", "Nombre"]
+            st.dataframe(df_analyse_cp, hide_index=True)
+            st.bar_chart(df_analyse_cp.set_index("Statut"))
+    else:
+        st.info("Ajoutez des données dans le tableau ci-dessus pour afficher l'analyse.")
+
+    if not edited_cp.empty:
+        output_cp = BytesIO()
+        with pd.ExcelWriter(output_cp, engine='openpyxl') as writer:
+            edited_cp.to_excel(writer, index=False, sheet_name='Conges_Payes')
+        st.download_button(
+            label="📥 Télécharger le suivi des CP (Excel)",
+            data=output_cp.getvalue(),
+            file_name=f"Suivi_Conges_Payes_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+# ---------------------------------------------------------
+# ONGLET 3 : MALADIES & ANALYSES
+# ---------------------------------------------------------
+with tab_maladies:
+    st.subheader("🏥 Suivi des Arrêts Maladie & Tableau d'Analyse")
+    st.write("Consultez et analysez les arrêts de travail de vos agents.")
+    
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        f_mal_excel = st.file_uploader("Importer un fichier Excel (Maladies)", type=["xlsx", "xls"], key="up_mal_excel")
+    with col_m2:
+        f_mal_pdf = st.file_uploader("Importer un fichier PDF (Maladies / Justificatif)", type=["pdf"], key="up_mal_pdf")
+        
+    data_mal_defaut = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Motif / Justificatif", "Commentaire"])
+    
+    if f_mal_excel:
+        try:
+            data_mal_defaut = pd.read_excel(f_mal_excel)
+            st.success("Fichier Excel Maladies importé avec succès !")
+        except Exception as e:
+            st.error(f"Erreur de lecture Excel : {e}")
+            
+    elif f_mal_pdf:
+        try:
+            reader = pypdf.PdfReader(f_mal_pdf)
+            for page in reader.pages:
+                pass
+            st.info("Fichier PDF de justificatif lu. Vous pouvez l'ajouter dans le tableau.")
+        except Exception as e:
+            st.error(f"Erreur de lecture PDF : {e}")
+
+    edited_maladies = st.data_editor(
+        data_mal_defaut,
+        num_rows="dynamic",
+        hide_index=True,
+        key="editor_maladies_interactif"
+    )
+    
+    st.markdown("---")
+    st.subheader("📊 Tableau d'Analyse — Maladies & Absences")
+    
+    if not edited_maladies.empty:
+        total_maladies = len(edited_maladies)
+        st.metric("Total Arrêts / Absences enregistrés", total_maladies)
+        
+        if "Agent" in edited_maladies.columns:
+            st.write("##### Arrêts par Agent :")
+            df_analyse_mal = edited_maladies["Agent"].value_counts().reset_index()
+            df_analyse_mal.columns = ["Agent", "Nombre d'arrêts"]
+            st.dataframe(df_analyse_mal, hide_index=True)
+            if not df_analyse_mal.empty and df_analyse_mal["Agent"].iloc[0] != "":
+                st.bar_chart(df_analyse_mal.set_index("Agent"))
+    else:
+        st.info("Ajoutez des données dans le tableau ci-dessus pour afficher l'analyse.")
+
+    if not edited_maladies.empty:
+        output_mal = BytesIO()
+        with pd.ExcelWriter(output_mal, engine='openpyxl') as writer:
+            edited_maladies.to_excel(writer, index=False, sheet_name='Maladies_Absences')
+        st.download_button(
+            label="📥 Télécharger le suivi des Maladies (Excel)",
+            data=output_mal.getvalue(),
+            file_name=f"Suivi_Maladies_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
