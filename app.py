@@ -271,7 +271,7 @@ for item in tous_agents:
                         premiere_debut_lendemain = datetime.combine(dt_lendemain_ref.date(), datetime.min.time()) + timedelta(hours=16, minutes=40)
                         
                     max_fin_par_repos = premiere_debut_lendemain - timedelta(hours=11)
-                    plafond_absolu = datetime.combine(dt_jour.date(), datetime.min.time()) + timedelta(hours=5, minutes=40)
+                    plafond_absolu = datetime.combine(dt_jour.date(), datetime.min.time()) + timedelta(hours=23, minutes=0)
                     max_fin_par_repos = min(max_fin_par_repos, plafond_absolu)
                     
                     if max_fin_par_repos > derniere_fin:
@@ -279,8 +279,10 @@ for item in tous_agents:
                         heures_restantes = (dt_fin_pot - derniere_fin).total_seconds() / 3600.0
                         limite_fin_str = dt_fin_pot.strftime('%H:%M')
                     else:
-                        heures_restantes = 0.0
-                        limite_fin_str = heure_debut_str
+                        # Sécurité pour éviter 0h00 si la marge est trop serrée
+                        heures_restantes = min(heures_restantes, 3.0)
+                        dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
+                        limite_fin_str = dt_fin_pot.strftime('%H:%M')
                 else:
                     dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
                     limite_fin_str = dt_fin_pot.strftime('%H:%M')
