@@ -176,4 +176,109 @@ with tab_dispo:
                         start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
                     except Exception:
                         jan4 = datetime(annee_ref, 1, 4)
-                        start_week1 = jan4 - timedelta
+                        start_week1 = jan4 - timedelta(days=jan4.weekday())
+                        start_target = start_week1 + timedelta(weeks=num_semaine - 1)
+                    
+                    jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
+
+                    for ex_agent in df_agents["Agent"].unique():
+                        if not noms_sont_compatibles(ex_agent, texte_global):
+                            continue
+
+                        mots_cles = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 1]
+                        lignes_agent = []
+                        
+                        for block in texte_par_page:
+                            lignes_block = block.split('\n')
+                            capturer = False
+                            for line in lignes_block:
+                                line_upper = line.upper()
+                                if any(m in line_upper for m in mots_cles):
+                                    capturer = True
+                                    lignes_agent.append(line)
+                                    continue
+                                
+                                if capturer:
+                                    if any(w.upper() in line_upper for w in ["CONTRAT", "SITE", "TOTAL"]) and not any(m in line_upper for m in mots_cles):
+                                        capturer = False
+                                    else:
+                                        lignes_agent.append(line)
+
+                        source_lignes = lignes_agent if lignes_agent else texte_global.split('\n')
+
+                        services_par_date = {}
+                        
+                        for line in source_lignes:
+                            match_date = re.search(r'\b([0-3]?[0-9])/([0-1]?[0-9])/(?:20[2-3][0-9])?\b', line)
+                            hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
+                            
+                            if len(hours) >= 2:
+                                h1, h2 = hours[0], hours[1]
+                                try:
+                                    t1 = datetime.strptime(h1, '%H:%M')
+                                    t2 = datetime.strptime(h2, '%H:%M')
+                                    diff = (t2 - t1).total_seconds()
+                                    if diff <= 0: diff += 24 * 3600
+                                    duree = diff / 3600.0
+                                    if 0.5 <= duree <= 15.0:
+                                        if match_date:
+                                            j_str = match_date.group(1).zfill(2)
+                                            m_str = match_date.group(2).zfill(2)
+                                            date_trouvee = f"{j_str}/{m_str}/{annee_ref}"
+                                            if date_trouvee in jours_semaine:
+                                                if date_trouvee not in services_par_date:
+                                                    services_par_date[date_trouvee] = []
+                                                services_par_date[date_trouvee].append((t1, h1, h2, duree))
+                                except Exception:
+                                    pass
+
+                        semaine_agent = {}
+                        all_extracted_services = []
+                        for line in source_lignes:
+                            hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
+                            if len(hours) >= 2:
+                                h1, h2 = hours[0], hours[1]
+                                try:
+                                    t1 = datetime.strptime(h1, '%H:%M')
+                                    t2 = datetime.strptime(h2, '%H:%M')
+                                    diff = (t2 - t1).total_seconds()
+                                    if diff <= 0: diff += 24 * 3600
+                                    duree = diff / 3600.0
+                                    if 0.5 <= duree <= 15.0:
+                                        all_extracted_services.append((t1, h1, h2))
+                                except Exception:
+                                    pass
+
+                        all_extracted_services.sort(key=lambda x: x[0])
+                        
+                        for idx, j_target in enumerate(jours_semaine):
+                            if j_target in services_par_date and services_par_date[j_target]:
+                                s_jour = services_par_date[j_target][0]
+                                h1, h2 = s_jour[1], s_jour[2]
+                                dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
+                                dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
+                                if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
+                                semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
+                            elif idx < len(all_extracted_services):
+                                h1, h2 = all_extracted_services[idx][1], all_extracted_services[idx][2]
+                                dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
+                                dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
+                                if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
+                                semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
+                            else:
+                                semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
+
+                        cle_dict = f"{ex_agent}_S{num_semaine}"
+                        planning_agents[cle_dict] = semaine_agent
+
+            except Exception as e:
+                logs_debug.append(f"⚠️ Erreur de lecture sur {fichier.name} : {e}")
+
+    with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
+        for log in logs_debug:
+            st.write(log)
+
+    st.subheader("📋 Liste des Disponibilités & Opportunités")
+
+    tableau_resultats = []
+    tous_agents = df_agents[["Contrat", "Agent"]].drop_duplicates().to_dict(orient="records")
