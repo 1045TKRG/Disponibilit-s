@@ -36,8 +36,8 @@ st.set_page_config(
 # Format : "NomUtilisateur": {"mdp": "MotDePasse", "role": "RH / Superviseur / Agent"}
 UTILISATEURS_AUTORISES = {
     "admin": {"mdp": "SOS2026", "role": "Administrateur unique"},
-    "tata hinerava": {"mdp": "Hinerava2360", "role": "Planificatrice"},
-    "dezerville hoania": {"mdp": "Hoania2581", "role": "Planificateur"}
+    "tatahinerava": {"mdp": "Hinerava2360", "role": "Planificatrice"},
+    "dezervillehoania": {"mdp": "Hoania2581", "role": "Planificateur"}
 }
 
 if "authentifie" not in st.session_state:
