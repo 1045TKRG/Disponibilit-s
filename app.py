@@ -233,7 +233,4 @@ with tab_dispo:
         for log in logs_debug:
             st.write(log)
 
-    st.subheader("📋 Liste des Disponibilités & Opportunités")
-
-    tableau_resultats = []
-    tous_agents = df
+    st.subheader("📋 Liste des Dispon
