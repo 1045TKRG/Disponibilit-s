@@ -213,4 +213,18 @@ with tab_dispo:
                         else:
                             if service_idx < len(services_uniques):
                                 h1, h2 = services_uniques[service_idx]
-                                dt_deb = datetime.strptime(f
+                                dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
+                                dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
+                                if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
+                                
+                                semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
+                                service_idx += 1
+                            else:
+                                semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
+
+                    for agent_name in agents_trouves_dans_pdf:
+                        cle_dict = f"{agent_name}_S{num_semaine}"
+                        planning_agents[cle_dict] = semaine_agent
+
+            except Exception as e:
+                logs_debug
