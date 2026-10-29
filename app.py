@@ -177,4 +177,154 @@ if fichiers_planning:
                             h1, h2 = services_uniques[service_idx]
                             dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
                             dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
-                            if dt_fin <=
+                            if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
+                            
+                            semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
+                            service_idx += 1
+                        else:
+                            semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
+
+                for agent_name in agents_trouves_dans_pdf:
+                    cle_dict = f"{agent_name}_S{num_semaine}"
+                    if cle_dict not in planning_agents:
+                        planning_agents[cle_dict] = {}
+                    planning_agents[cle_dict].update(semaine_agent)
+
+        except Exception as e:
+            logs_debug.append(f"⚠️ Erreur de lecture sur {fichier.name} : {e}")
+
+with st.expander("🔍 Journal de diagnostic des PDF", expanded=True):
+    for log in logs_debug:
+        st.write(log)
+
+# ---------------------------------------------------------
+# 3. GÉNÉRATION DU TABLEAU ET CONTRÔLE RÉGLEMENTAIRE STRICT
+# ---------------------------------------------------------
+st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Rigoureux)")
+
+tableau_resultats = []
+tous_agents = df_agents[["Contrat", "Agent"]].drop_duplicates().to_dict(orient="records")
+
+for item in tous_agents:
+    contrat_nom = item["Contrat"]
+    agent_nom = item["Agent"]
+    
+    matched_schedules_list = []
+    for k, sched in planning_agents.items():
+        nom_base = k.rsplit('_S', 1)[0]
+        if noms_sont_compatibles(agent_nom, nom_base):
+            matched_schedules_list.append(sched)
+    
+    for matched_schedule in matched_schedules_list:
+        if matched_schedule:
+            dates_triees = sorted(
+                matched_schedule.keys(), 
+                key=lambda x: datetime.strptime(x, '%d/%m/%Y')
+            )
+            jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
+
+            for idx_d, d in enumerate(dates_triees):
+                info_jour = matched_schedule[d]
+                statut = info_jour["statut"]
+                dt_jour = datetime.strptime(d, '%d/%m/%Y')
+                
+                if statut == "REPOS":
+                    creneau_texte = "Journée complète (00h00 - 24h00)"
+                    if jours_repos_total == 1:
+                        creneau_texte += " — seul jour de repos hebdo"
+                    opportunite = "🟢 Jour de Repos"
+                    
+                    if idx_d > 0:
+                        veille_d = dates_triees[idx_d - 1]
+                        info_veille = matched_schedule.get(veille_d, {})
+                        intervalles_veille = info_veille.get("intervalles", [])
+                        if intervalles_veille:
+                            derniere_fin_veille = max([iv[1] for iv in intervalles_veille])
+                            debut_autorise = derniere_fin_veille + timedelta(hours=11)
+                            if debut_autorise.date() == dt_jour.date():
+                                heure_min_str = debut_autorise.strftime('%H:%M')
+                                dt_fin_max = min(debut_autorise + timedelta(hours=8), datetime.combine(dt_jour.date(), datetime.max.time()) - timedelta(hours=1))
+                                creneau_texte = f"De {heure_min_str} à {dt_fin_max.strftime('%H:%M')} (Repos 11h respecté)"
+                else:
+                    intervalles = info_jour["intervalles"]
+                    heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
+                    
+                    if heures_faites >= 10.0:
+                        h_faites_fmt = decimal_to_hm(heures_faites)
+                        creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
+                        opportunite = "🔴 Complet (10h atteint)"
+                    else:
+                        derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
+                        heure_debut_str = derniere_fin.strftime('%H:%M')
+                        heures_restantes = max(0.0, 10.0 - heures_faites)
+                        
+                        limite_fin_str = ""
+                        if idx_d + 1 < len(dates_triees):
+                            info_lendemain = matched_schedule.get(dates_triees[idx_d + 1], {})
+                            intervalles_lendemain = info_lendemain.get("intervalles", [])
+                            
+                            if intervalles_lendemain:
+                                premiere_debut_lendemain = min([iv[0] for iv in intervalles_lendemain])
+                            else:
+                                dt_lendemain_ref = datetime.strptime(dates_triees[idx_d + 1], '%d/%m/%Y')
+                                premiere_debut_lendemain = datetime.combine(dt_lendemain_ref.date(), datetime.min.time()) + timedelta(hours=16, minutes=40)
+                                
+                            max_fin_par_repos = premiere_debut_lendemain - timedelta(hours=11)
+                            if max_fin_par_repos > derniere_fin:
+                                dt_fin_pot = min(derniere_fin + timedelta(hours=heures_restantes), max_fin_par_repos)
+                                heures_restantes = (dt_fin_pot - derniere_fin).total_seconds() / 3600.0
+                                limite_fin_str = dt_fin_pot.strftime('%H:%M')
+                            else:
+                                heures_restantes = 0.0
+                                limite_fin_str = heure_debut_str
+                        else:
+                            dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
+                            limite_fin_str = dt_fin_pot.strftime('%H:%M')
+
+                        duree_fmt = decimal_to_hm(heures_restantes)
+                        creneau_texte = f"{duree_fmt} max ce jour (entre {heure_debut_str} à {limite_fin_str} demain)"
+                        opportunite = "possibilité de faire travailler l’agent"
+                
+                tableau_resultats.append({
+                    "Contrat": contrat_nom,
+                    "Agent": agent_nom,
+                    "Date": d,
+                    "Type d'opportunité": opportunite,
+                    "Créneau horaire / Heures possibles": creneau_texte,
+                    "Dernier recours": ""
+                })
+
+if tableau_resultats:
+    df_table = pd.DataFrame(tableau_resultats)
+
+    edited_df = st.data_editor(
+        df_table,
+        column_config={
+            "Dernier recours": st.column_config.TextColumn(
+                "Dernier recours (Saisie quotidienne)",
+                help="Saisir manuellement des notes ou commentaires",
+                max_chars=150
+            )
+        },
+        disabled=["Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
+        hide_index=True,
+    )
+    
+    st.markdown("---")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.success("✅ Données prêtes à être exportées pour vos justificatifs de planning.")
+    with col2:
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
+        processed_data = output.getvalue()
+        
+        st.download_button(
+            label="📥 Télécharger le rapport (Excel)",
+            data=processed_data,
+            file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+else:
+    st.warning("⚠️ Aucun résultat dans le tableau. Ouvrez le journal de diagnostic ci-dessus pour vérifier la détection des agents.")
