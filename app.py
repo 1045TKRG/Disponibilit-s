@@ -162,7 +162,7 @@ with tab_dispo:
         matches = sum(1 for mot in mots_excel if mot in p_upper)
         return matches >= 1
 
- if fichiers_planning:
+if fichiers_planning:
         for fichier in fichiers_planning:
             match_semaine = re.search(r'S([0-9]{1,2})', fichier.name.upper())
             
