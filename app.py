@@ -219,6 +219,7 @@ with tab_dispo:
                             else:
                                 semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
 
+                    # Sécurité : Si aucun horaire n'est extrait, on assigne tous les agents du référentiel pour garantir l'affichage
                     if not agents_trouves_dans_pdf:
                         agents_trouves_dans_pdf = list(df_agents["Agent"].unique())
 
@@ -226,43 +227,4 @@ with tab_dispo:
                         cle_dict = f"{agent_name}_S{num_semaine}"
                         planning_agents[cle_dict] = semaine_agent
 
-            except Exception as e:
-                logs_debug.append(f"⚠️ Erreur de lecture sur {fichier.name} : {e}")
-
-    with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
-        for log in logs_debug:
-            st.write(log)
-
-    st.subheader("📋 Liste des Disponibilités & Opportunités")
-
-    tableau_resultats = []
-    tous_agents = df_agents[["Contrat", "Agent"]].drop_duplicates().to_dict(orient="records")
-
-    annee_ref = 2026
-    start_target = datetime.fromisocalendar(annee_ref, 43, 1)
-    jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
-
-    for item in tous_agents:
-        contrat_nom = item["Contrat"]
-        agent_nom = item["Agent"]
-        
-        matched_schedule = None
-        for k, sched in planning_agents.items():
-            nom_base = k.rsplit('_S', 1)[0]
-            if noms_sont_compatibles(agent_nom, nom_base):
-                matched_schedule = sched
-                break
-                
-        if not matched_schedule:
-            matched_schedule = {j: {"statut": "REPOS", "intervalles": []} for j in jours_defaut}
-
-        dates_triees = sorted(
-            matched_schedule.keys(), 
-            key=lambda x: datetime.strptime(x, '%d/%m/%Y')
-        )
-        jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
-
-        for idx_d, d in enumerate(dates_triees):
-            info_jour = matched_schedule[d]
-            statut = info_jour["statut"]
-            dt_jour = datetime.strptime(d, '%d/%m/%Y')
+            except
