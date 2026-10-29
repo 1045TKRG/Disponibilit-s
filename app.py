@@ -243,7 +243,7 @@ with tab_dispo:
         start_target = datetime.fromisocalendar(annee_ref, 43, 1)
         jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
     except Exception:
-        jours_defaut = [(datetime(2026, 10, 19) + timedelta(days=i)).strftime('%d/%m/%Y'] for i in range(7)]
+        jours_defaut = [(datetime(2026, 10, 19) + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
 
     for item in tous_agents:
         contrat_nom = item["Contrat"]
@@ -260,57 +260,3 @@ with tab_dispo:
             matched_schedule = {j: {"statut": "REPOS", "intervalles": []} for j in jours_defaut}
 
         dates_triees = sorted(
-            matched_schedule.keys(), 
-            key=lambda x: datetime.strptime(x, '%d/%m/%Y')
-        )
-        jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
-
-        for idx_d, d in enumerate(dates_triees):
-            info_jour = matched_schedule[d]
-            statut = info_jour["statut"]
-            dt_jour = datetime.strptime(d, '%d/%m/%Y')
-            
-            if statut == "REPOS":
-                creneau_texte = "Journée complète (00h00 - 24h00)"
-                if jours_repos_total == 1:
-                    creneau_texte += " — seul jour de repos hebdo"
-                opportunite = "🟢 Jour de Repos"
-            else:
-                intervalles = info_jour["intervalles"]
-                heures_faites = sum((iv[1] - iv[0]).total_seconds() for iv in intervalles) / 3600.0
-                
-                if heures_faites >= 10.0:
-                    h_faites_fmt = decimal_to_hm(heures_faites)
-                    creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
-                    opportunite = "🔴 Complet (10h atteint)"
-                else:
-                    derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
-                    heure_debut_str = derniere_fin.strftime('%H:%M')
-                    heures_restantes = max(0.0, 10.0 - heures_faites)
-                    
-                    duree_fmt = decimal_to_hm(heures_restantes)
-                    creneau_texte = f"{duree_fmt} max ce jour (entre {heure_debut_str} à 00:00)"
-                    opportunite = "possibilité de faire travailler l’agent"
-            
-            tableau_resultats.append({
-                "Contrat": contrat_nom,
-                "Agent": agent_nom,
-                "Date": d,
-                "Type d'opportunité": opportunite,
-                "Créneau horaire / Heures possibles": creneau_texte,
-                "Dernier recours": ""
-            })
-
-    if tableau_resultats:
-        df_table = pd.DataFrame(tableau_resultats)
-
-        edited_df = st.data_editor(
-            df_table,
-            column_config={
-                "Dernier recours": st.column_config.TextColumn(
-                    "Dernier recours (Saisie quotidienne)",
-                    help="Saisir manuellement des notes ou commentaires",
-                    max_chars=150
-                )
-            },
-            disabled
