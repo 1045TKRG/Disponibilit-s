@@ -272,25 +272,19 @@ for item in tous_agents:
                         
                     max_fin_par_repos = premiere_debut_lendemain - timedelta(hours=11)
                     
-                    # Plafond absolu strict à 05:40 pour garantir les 11h de repos avant la reprise à 16:40
-                    plafond_absolu = datetime.combine(dt_jour.date(), datetime.min.time()) + timedelta(hours=5, minutes=40)
-                    max_fin_par_repos = min(max_fin_par_repos, plafond_absolu)
-                    
                     if max_fin_par_repos > derniere_fin:
                         dt_fin_pot = min(derniere_fin + timedelta(hours=heures_restantes), max_fin_par_repos)
                         heures_restantes = (dt_fin_pot - derniere_fin).total_seconds() / 3600.0
                         limite_fin_str = dt_fin_pot.strftime('%H:%M')
                     else:
-                        # Si le calcul brut est bloqué, on applique une tolérance sécurisée pour afficher le battement correct
-                        dt_fin_pot = min(derniere_fin + timedelta(hours=heures_restantes), plafond_absolu)
-                        heures_restantes = max(0.5, (dt_fin_pot - derniere_fin).total_seconds() / 3600.0)
-                        limite_fin_str = dt_fin_pot.strftime('%H:%M')
+                        heures_restantes = 0.0
+                        limite_fin_str = heure_debut_str
                 else:
                     dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
                     limite_fin_str = dt_fin_pot.strftime('%H:%M')
 
                 duree_fmt = decimal_to_hm(heures_restantes)
-                creneau_texte = f"{duree_fmt} max ce jour (entre {heure_debut_str} à {limite_fin_str} demain)"
+                creneau_texte = f"{duree_fmt} max ce jour (entre {heure_debut_str} à {limite_fin_str})"
                 opportunite = "possibilité de faire travailler l’agent"
         
         tableau_resultats.append({
