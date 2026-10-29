@@ -194,57 +194,48 @@ with tab_dispo:
                                 if any(m in line_upper for m in mots_cles):
                                     lignes_agent.append(line)
 
-                        services_tries = []
                         source_lignes = lignes_agent if lignes_agent else texte_global.split('\n')
                         
+                        # Extraction de TOUTES les paires d'heures valides trouvées pour l'agent (jour par jour)
+                        services_agent_semaine = []
                         for line in source_lignes:
                             hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
                             if len(hours) >= 2:
-                                h1, h2 = hours[0], hours[1]
-                                try:
-                                    t1 = datetime.strptime(h1, '%H:%M')
-                                    t2 = datetime.strptime(h2, '%H:%M')
-                                    diff = (t2 - t1).total_seconds()
-                                    if diff <= 0: diff += 24 * 3600
-                                    duree = diff / 3600.0
-                                    if 0.5 <= duree <= 15.0:
-                                        services_tries.append((t1, h1, h2, duree))
-                                except Exception:
-                                    pass
-
-                        services_tries.sort(key=lambda x: x[0])
-                        services_uniques = []
-                        seen_intervalles = set()
-                        for s in services_tries:
-                            sig = f"{s[1]}-{s[2]}"
-                            if sig not in seen_intervalles:
-                                seen_intervalles.add(sig)
-                                # Application de la durée exacte (7h40 = 7.666h) pour l'agent SAM le 19/10/2026
-                                duree_finale = 7.6667 if ("SAM" in ex_agent.upper()) else s[3]
-                                services_uniques.append((s[1], s[2], duree_finale))
+                                for idx_h in range(0, len(hours) - 1, 2):
+                                    h1, h2 = hours[idx_h], hours[idx_h+1]
+                                    try:
+                                        t1 = datetime.strptime(h1, '%H:%M')
+                                        t2 = datetime.strptime(h2, '%H:%M')
+                                        diff = (t2 - t1).total_seconds()
+                                        if diff <= 0: diff += 24 * 3600
+                                        duree = diff / 3600.0
+                                        if 0.5 <= duree <= 15.0:
+                                            services_agent_semaine.append((h1, h2, duree))
+                                    except Exception:
+                                        pass
 
                         semaine_agent = {}
-                        service_idx = 0
                         for idx, j_target in enumerate(jours_semaine):
-                            if service_idx < len(services_uniques):
-                                h1, h2, duree_existante = services_uniques[service_idx]
-                                
-                                # Forcer l'affichage de début à 07:40 pour l'agent SAM
-                                if "SAM" in ex_agent.upper():
-                                    h1 = "07:40"
+                            if idx < len(services_agent_semaine):
+                                h1, h2, duree_existante = services_agent_semaine[idx]
                                 
                                 dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
                                 dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
                                 if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
-                                
+
                                 semaine_agent[j_target] = {
-                                    "statut": "TRAVAIL", 
-                                    "intervalles": [(dt_deb, dt_fin)],
-                                    "duree_existante": 7.6667 if "SAM" in ex_agent.upper() else duree_existante
+                                    "statut": "TRAVAIL",
+                                    "heure_fin_reelle": h2,
+                                    "duree_existante": duree_existante,
+                                    "intervalles": [(dt_deb, dt_fin)]
                                 }
-                                service_idx += 1
                             else:
-                                semaine_agent[j_target] = {"statut": "REPOS", "intervalles": [], "duree_existante": 0.0}
+                                semaine_agent[j_target] = {
+                                    "statut": "REPOS",
+                                    "heure_fin_reelle": "00:00",
+                                    "duree_existante": 0.0,
+                                    "intervalles": []
+                                }
 
                         cle_dict = f"{ex_agent}_S{num_semaine}"
                         planning_agents[cle_dict] = semaine_agent
@@ -284,7 +275,7 @@ with tab_dispo:
             matched_schedule = planning_agents.get(cle_dict)
                     
             if not matched_schedule:
-                matched_schedule = {j: {"statut": "REPOS", "intervalles": [], "duree_existante": 0.0} for j in jours_defaut}
+                matched_schedule = {j: {"statut": "REPOS", "heure_fin_reelle": "00:00", "duree_existante": 0.0, "intervalles": []} for j in jours_defaut}
 
             dates_triees = sorted(
                 list(matched_schedule.keys()), 
@@ -295,7 +286,6 @@ with tab_dispo:
             for idx_d, d in enumerate(dates_triees):
                 info_jour = matched_schedule[d]
                 statut = info_jour["statut"]
-                dt_jour = datetime.strptime(d, '%d/%m/%Y')
                 
                 if statut == "REPOS":
                     creneau_texte = "Journée complète (00h00 - 24h00)"
@@ -303,23 +293,18 @@ with tab_dispo:
                         creneau_texte += " — seul jour de repos hebdo"
                     opportunite = "🟢 Jour de Repos"
                 else:
-                    intervalles = info_jour["intervalles"]
-                    # Forcer 7h40 (7.6667h) pour SAM le 19/10/2026 pour obtenir exactement 2h20 restantes (10h - 7h40)
-                    duree_existante = 7.6667 if ("SAM" in agent_nom.upper() and d == "19/10/2026") else info_jour["duree_existante"]
+                    duree_existante = info_jour["duree_existante"]
+                    heure_fin = info_jour["heure_fin_reelle"]
                     
                     if duree_existante >= 10.0:
                         h_faites_fmt = decimal_to_hm(duree_existante)
                         creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
                         opportunite = "🔴 Complet (10h atteint)"
                     else:
-                        derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
-                        heure_debut_str = "07:40" if ("SAM" in agent_nom.upper() and d == "19/10/2026") else derniere_fin.strftime('%H:%M')
-                        
-                        # Calcul strict du reste pour atteindre exactement 10h max (02h20 restants)
                         heures_restantes = max(0.0, 10.0 - duree_existante)
                         duree_fmt = decimal_to_hm(heures_restantes)
                         
-                        creneau_texte = f"{duree_fmt} max ce jour (entre {heure_debut_str} à 00:00)"
+                        creneau_texte = f"{duree_fmt} max ce jour (entre {heure_fin} à 00:00)"
                         opportunite = "possibilité de faire travailler l’agent"
                 
                 tableau_resultats.append({
@@ -567,4 +552,35 @@ with tab_maladies_fin:
     if not edited_mal5.empty and "Date Début" in edited_mal5.columns and "Date Fin" in edited_mal5.columns:
         lignes_mal_fetes = []
         for idx, row in edited_mal5.iterrows():
-            d
+            d_deb_str = str(row.get("Date Début", ""))
+            d_fin_str = str(row.get("Date Fin", ""))
+            agent_nom = str(row.get("Agent", "Inconnu"))
+            annee_val = str(row.get("Année", ""))
+            motif_val = str(row.get("Motif", ""))
+
+            try:
+                dt_deb = pd.to_datetime(d_deb_str, dayfirst=True, errors='coerce')
+                dt_fin = pd.to_datetime(d_fin_str, dayfirst=True, errors='coerce')
+
+                if pd.notna(dt_deb) and pd.notna(dt_fin):
+                    plage_dates = pd.date_range(start=dt_deb, end=dt_fin)
+                    touche_fetes = any((dt.month == 12 and dt.day in [24, 25, 31]) or (dt.month == 1 and dt.day == 1) for dt in plage_dates)
+                    
+                    if touche_fetes:
+                        annee_detectee = annee_val if annee_val else str(dt_deb.year)
+                        lignes_mal_fetes.append({"Agent": agent_nom, "Date Début": d_deb_str, "Date Fin": d_fin_str, "Année": annee_detectee, "Motif": motif_val})
+            except Exception:
+                pass
+
+        df_fetes_mal = pd.DataFrame(lignes_mal_fetes)
+        if not df_fetes_mal.empty:
+            st.success(f"🎯 {len(df_fetes_mal)} arrêt(s) maladie identifié(s) pendant les fêtes !")
+            st.dataframe(df_fetes_mal, hide_index=True)
+            recurrence_mal = df_fetes_mal["Agent"].value_counts().reset_index()
+            recurrence_mal.columns = ["Agent", "Nombre d'arrêts pendant les fêtes"]
+            st.dataframe(recurrence_mal, hide_index=True)
+            st.bar_chart(recurrence_mal.set_index("Agent"))
+        else:
+            st.info("Aucun arrêt maladie ne coïncide avec les fêtes de fin d'année.")
+    else:
+        st.info("Remplissez ou importez l'historique sur 5 ans pour lancer l'analyse.")
