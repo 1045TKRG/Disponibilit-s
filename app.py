@@ -200,31 +200,4 @@ with tab_dispo:
                         sig = f"{s[1]}-{s[2]}"
                         if sig not in seen_intervalles:
                             seen_intervalles.add(sig)
-                            services_uniques.append((s[1], s[2]))
-
-                    semaine_agent = {}
-                    service_idx = 0
-                    for idx, j_target in enumerate(jours_semaine):
-                        if idx == 4:
-                            semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
-                        else:
-                            if service_idx < len(services_uniques):
-                                h1, h2 = services_uniques[service_idx]
-                                dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
-                                dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
-                                if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
-                                
-                                semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
-                                service_idx += 1
-                            else:
-                                semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
-
-                    # Sécurité : Si aucun horaire n'est extrait, on assigne tous les agents du référentiel pour garantir l'affichage
-                    if not agents_trouves_dans_pdf:
-                        agents_trouves_dans_pdf = list(df_agents["Agent"].unique())
-
-                    for agent_name in agents_trouves_dans_pdf:
-                        cle_dict = f"{agent_name}_S{num_semaine}"
-                        planning_agents[cle_dict] = semaine_agent
-
-            except
+                            services_uniques.
