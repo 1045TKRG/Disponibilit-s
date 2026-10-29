@@ -136,6 +136,13 @@ with tab_dispo:
     planning_agents = {}
     logs_debug = []
 
+    def noms_sont_compatibles(excel_name, pdf_text):
+        mots_excel = [w.upper() for w in re.findall(r'\w+', excel_name) if len(w) > 2]
+        p_upper = pdf_text.upper()
+        if not mots_excel:
+            return False
+        return any(mot in p_upper for mot in mots_excel)
+
     if fichiers_planning:
         for fichier in fichiers_planning:
             match_semaine = re.search(r'S([0-9]{1,2})', fichier.name.upper())
@@ -164,19 +171,60 @@ with tab_dispo:
                 jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
 
                 for ex_agent in df_agents["Agent"].unique():
-                    # Vérification stricte du nom de l'agent dans le texte
-                    mots_nom = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 2]
-                    if not mots_nom or not any(m in texte_global.upper() for m in mots_nom):
+                    if not noms_sont_compatibles(ex_agent, texte_global):
                         continue
 
-                    # Par défaut, on initialise la semaine à repos pour éviter les cumuls erronés fantômes
+                    mots_cles = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 2]
+                    
+                    lignes_agent = []
+                    for block in texte_par_page:
+                        for line in block.split('\n'):
+                            line_upper = line.upper()
+                            if any(m in line_upper for m in mots_cles):
+                                lignes_agent.append(line)
+
+                    # Extraction propre des paires d'heures sur les lignes de l'agent
+                    vacations_par_jour = {i: [] for i in range(7)}
+                    idx_j = 0
+                    
+                    source = lignes_agent if lignes_agent else texte_par_page
+                    for block in source:
+                        lignes_texte = block.split('\n') if isinstance(block, str) else [block]
+                        for line in lignes_texte:
+                            hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
+                            if len(hours) >= 2:
+                                for idx_h in range(0, len(hours) - 1, 2):
+                                    h1, h2 = hours[idx_h], hours[idx_h+1]
+                                    try:
+                                        t1 = datetime.strptime(h1, '%H:%M')
+                                        t2 = datetime.strptime(h2, '%H:%M')
+                                        diff = (t2 - t1).total_seconds()
+                                        if diff <= 0: diff += 24 * 3600
+                                        duree = diff / 3600.0
+                                        if 0.5 <= duree <= 15.0:
+                                            if idx_j < 7:
+                                                vacations_par_jour[idx_j].append((h1, h2, duree))
+                                                idx_j += 1
+                                    except Exception:
+                                        pass
+
                     semaine_agent = {}
-                    for j in jours_semaine:
-                        semaine_agent[j] = {
-                            "statut": "REPOS",
-                            "heure_fin_reelle": "00:00",
-                            "duree_existante": 0.0
-                        }
+                    for i, j_target in enumerate(jours_semaine):
+                        v_list = vacations_par_jour.get(i, [])
+                        if v_list:
+                            duree_totale = sum(v[2] for v in v_list)
+                            derniere_fin = v[-1][1]
+                            semaine_agent[j_target] = {
+                                "statut": "TRAVAIL",
+                                "heure_fin_reelle": derniere_fin,
+                                "duree_existante": duree_totale
+                            }
+                        else:
+                            semaine_agent[j_target] = {
+                                "statut": "REPOS",
+                                "heure_fin_reelle": "00:00",
+                                "duree_existante": 0.0
+                            }
 
                     planning_agents[f"{ex_agent}_S{num_semaine}"] = semaine_agent
 
@@ -208,75 +256,4 @@ with tab_dispo:
             matched_schedule = planning_agents.get(cle_dict)
                     
             if not matched_schedule:
-                matched_schedule = {j: {"statut": "REPOS", "heure_fin_reelle": "00:00", "duree_existante": 0.0} for j in jours_defaut}
-
-            dates_triees = sorted(matched_schedule.keys(), key=lambda x: datetime.strptime(x, '%d/%m/%Y'))
-            jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
-
-            for d in dates_triees:
-                info_jour = matched_schedule[d]
-                statut = info_jour["statut"]
-                
-                if statut == "REPOS":
-                    creneau_texte = "Journée complète (00h00 - 24h00)"
-                    if jours_repos_total == 1:
-                        creneau_texte += " — seul jour de repos hebdo"
-                    opportunite = "🟢 Jour de Repos"
-                else:
-                    creneau_texte = "Créneau validé"
-                    opportunite = "Occupé"
-                
-                tableau_resultats.append({
-                    "Semaine": f"S{num_semaine}",
-                    "Contrat": contrat_nom,
-                    "Agent": agent_nom,
-                    "Date": d,
-                    "Type d'opportunité": opportunite,
-                    "Créneau horaire / Heures possibles": creneau_texte,
-                    "Dernier recours": ""
-                })
-
-    if tableau_resultats:
-        df_table = pd.DataFrame(tableau_resultats)
-        edited_df = st.data_editor(
-            df_table,
-            column_config={
-                "Dernier recours": st.column_config.TextColumn(
-                    "Dernier recours (Saisie quotidienne)",
-                    max_chars=150
-                )
-            },
-            disabled=["Semaine", "Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
-            hide_index=True,
-            key="editor_dispo"
-        )
-        
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
-        
-        st.download_button(
-            label="📥 Télécharger le rapport (Excel)",
-            data=output.getvalue(),
-            file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-# ---------------------------------------------------------
-# AUTRES ONGLETS (CP & Maladies standards)
-# ---------------------------------------------------------
-with tab_cp:
-    st.subheader("🏖️ Suivi des Congés Payés (CP)")
-    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Type de Congé", "Statut"]), num_rows="dynamic", key="cp_simple")
-
-with tab_maladies:
-    st.subheader("🏥 Suivi des Arrêts Maladie")
-    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Motif", "Commentaire"]), num_rows="dynamic", key="mal_simple")
-
-with tab_cp_fin:
-    st.subheader("🎄 CP Fêtes de Fin d'Année")
-    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année"]), num_rows="dynamic", key="cp5_simple")
-
-with tab_maladies_fin:
-    st.subheader("🎄 Maladies Fêtes de Fin d'Année")
-    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année", "Motif"]), num_rows="dynamic", key="mal5_simple")
+                matched_schedule = {j: {"statut": "REPOS", "heure_fin
