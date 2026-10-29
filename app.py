@@ -73,7 +73,7 @@ tab_dispo, tab_cp, tab_maladies, tab_cp_fin, tab_maladies_fin = st.tabs([
 ])
 
 # ---------------------------------------------------------
-# ONGLET 1 : DISPONIBILITÉS
+# ONGLET 1 : DISPONIBILITÉS (VERSION STABLE ORIGINELLE)
 # ---------------------------------------------------------
 with tab_dispo:
     st.sidebar.header("📁 Données de la Semaine (Dispo)")
@@ -187,16 +187,15 @@ with tab_dispo:
 
                         mots_cles = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 1]
                         lignes_agent = []
-                        
                         for block in texte_par_page:
-                            block_upper = block.upper()
-                            if any(m in block_upper for m in mots_cles):
-                                for line in block.split('\n'):
+                            for line in block.split('\n'):
+                                line_upper = line.upper()
+                                if any(m in line_upper for m in mots_cles):
                                     lignes_agent.append(line)
 
+                        services_tries = []
                         source_lignes = lignes_agent if lignes_agent else texte_global.split('\n')
-
-                        services_agent = []
+                        
                         for line in source_lignes:
                             hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
                             if len(hours) >= 2:
@@ -208,19 +207,30 @@ with tab_dispo:
                                     if diff <= 0: diff += 24 * 3600
                                     duree = diff / 3600.0
                                     if 0.5 <= duree <= 15.0:
-                                        if (h1, h2) not in [(s[0], s[1]) for s in services_agent]:
-                                            services_agent.append((h1, h2))
+                                        services_tries.append((t1, h1, h2, duree))
                                 except Exception:
                                     pass
 
+                        services_tries.sort(key=lambda x: x[0])
+                        services_uniques = []
+                        seen_intervalles = set()
+                        for s in services_tries:
+                            sig = f"{s[1]}-{s[2]}"
+                            if sig not in seen_intervalles:
+                                seen_intervalles.add(sig)
+                                services_uniques.append((s[1], s[2]))
+
                         semaine_agent = {}
+                        service_idx = 0
                         for idx, j_target in enumerate(jours_semaine):
-                            if idx < len(services_agent):
-                                h1, h2 = services_agent[idx]
+                            if service_idx < len(services_uniques):
+                                h1, h2 = services_uniques[service_idx]
                                 dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
                                 dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
                                 if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
+                                
                                 semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
+                                service_idx += 1
                             else:
                                 semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
 
@@ -228,7 +238,7 @@ with tab_dispo:
                         planning_agents[cle_dict] = semaine_agent
 
             except Exception as e:
-                logs_debug.append(f"⚠️ Erreur sur {fichier.name} : {e}")
+                logs_debug.append(f"⚠️ Erreur de lecture sur {fichier.name} : {e}")
 
     with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
         for log in logs_debug:
