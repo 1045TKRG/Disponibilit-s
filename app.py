@@ -193,7 +193,7 @@ with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
         st.write(log)
 
 # ---------------------------------------------------------
-# 3. GÉNÉRATION DU TABLEAU (GARANTI POUR TOUS LES AGENTS)
+# 3. GÉNÉRATION DU TABLEAU (MÉTHODE ROBUSTE PAR JOUR)
 # ---------------------------------------------------------
 st.subheader("📋 Liste des Disponibilités & Opportunités (Contrôle Rigoureux)")
 
@@ -234,18 +234,6 @@ for item in tous_agents:
             if jours_repos_total == 1:
                 creneau_texte += " — seul jour de repos hebdo"
             opportunite = "🟢 Jour de Repos"
-            
-            if idx_d > 0:
-                veille_d = dates_triees[idx_d - 1]
-                info_veille = matched_schedule.get(veille_d, {})
-                intervalles_veille = info_veille.get("intervalles", [])
-                if intervalles_veille:
-                    derniere_fin_veille = max([iv[1] for iv in intervalles_veille])
-                    debut_autorise = derniere_fin_veille + timedelta(hours=11)
-                    if debut_autorise.date() == dt_jour.date():
-                        heure_min_str = debut_autorise.strftime('%H:%M')
-                        dt_fin_max = min(debut_autorise + timedelta(hours=8), datetime.combine(dt_jour.date(), datetime.max.time()) - timedelta(hours=1))
-                        creneau_texte = f"De {heure_min_str} à {dt_fin_max.strftime('%H:%M')} (Repos 11h respecté)"
         else:
             intervalles = info_jour["intervalles"]
             heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
@@ -259,32 +247,8 @@ for item in tous_agents:
                 heure_debut_str = derniere_fin.strftime('%H:%M')
                 heures_restantes = max(0.0, 10.0 - heures_faites)
                 
-                limite_fin_str = ""
-                if idx_d + 1 < len(dates_triees):
-                    info_lendemain = matched_schedule.get(dates_triees[idx_d + 1], {})
-                    intervalles_lendemain = info_lendemain.get("intervalles", [])
-                    
-                    if intervalles_lendemain:
-                        premiere_debut_lendemain = min([iv[0] for iv in intervalles_lendemain])
-                    else:
-                        dt_lendemain_ref = datetime.strptime(dates_triees[idx_d + 1], '%d/%m/%Y')
-                        premiere_debut_lendemain = datetime.combine(dt_lendemain_ref.date(), datetime.min.time()) + timedelta(hours=16, minutes=40)
-                        
-                    max_fin_par_repos = premiere_debut_lendemain - timedelta(hours=11)
-                    
-                    if max_fin_par_repos > derniere_fin:
-                        dt_fin_pot = min(derniere_fin + timedelta(hours=heures_restantes), max_fin_par_repos)
-                        heures_restantes = (dt_fin_pot - derniere_fin).total_seconds() / 3600.0
-                        limite_fin_str = dt_fin_pot.strftime('%H:%M')
-                    else:
-                        heures_restantes = 0.0
-                        limite_fin_str = heure_debut_str
-                else:
-                    dt_fin_pot = derniere_fin + timedelta(hours=heures_restantes)
-                    limite_fin_str = dt_fin_pot.strftime('%H:%M')
-
                 duree_fmt = decimal_to_hm(heures_restantes)
-                creneau_texte = f"{duree_fmt} max ce jour (entre {heure_debut_str} à {limite_fin_str})"
+                creneau_texte = f"{duree_fmt} max ce jour (entre {heure_debut_str} à 00:00)"
                 opportunite = "possibilité de faire travailler l’agent"
         
         tableau_resultats.append({
