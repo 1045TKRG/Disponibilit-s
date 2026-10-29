@@ -188,7 +188,6 @@ with tab_dispo:
 
                         mots_cles = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 1]
                         
-                        # Récupération des lignes contenant le nom de l'agent
                         lignes_agent = []
                         for block in texte_par_page:
                             for line in block.split('\n'):
@@ -198,11 +197,12 @@ with tab_dispo:
 
                         source_lignes = lignes_agent if lignes_agent else texte_global.split('\n')
 
-                        # Extraction séquentielle de tous les créneaux horaires trouvés pour l'agent
+                        # Extraction propre et robuste des paires d'heures (début / fin)
                         services_agent = []
                         for line in source_lignes:
                             hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
                             if len(hours) >= 2:
+                                # On prend chaque couple consécutif d'heures sur la ligne
                                 for idx_h in range(0, len(hours) - 1, 2):
                                     h1, h2 = hours[idx_h], hours[idx_h+1]
                                     try:
@@ -216,7 +216,6 @@ with tab_dispo:
                                     except Exception:
                                         pass
 
-                        # Attribution jour par jour dans l'ordre de la semaine
                         semaine_agent = {}
                         for idx, j_target in enumerate(jours_semaine):
                             if idx < len(services_agent):
