@@ -254,4 +254,10 @@ with tab_dispo:
                 break
                 
         if not matched_schedule:
-            matched_schedule = {
+            matched_schedule = {j: {"statut": "REPOS", "intervalles": []} for j in jours_defaut}
+
+        dates_triees = sorted(
+            matched_schedule.keys(), 
+            key=lambda x: datetime.strptime(x, '%d/%m/%Y')
+        )
+        jours_repos_total = sum(1 for d
