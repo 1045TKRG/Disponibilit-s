@@ -144,12 +144,12 @@ with tab_dispo:
             num_semaine = int(match_semaine.group(1)) if match_semaine else 43
 
             try:
+                lignes_pdf = []
                 with pdfplumber.open(fichier) as pdf:
-                     texte_global = ""
-                     for page in pdf.pages:
-                         t = page.extract_text()
-                         if t:
-                             texte_global += t + "\n"
+                    for page in pdf.pages:
+                        t = page.extract_text()
+                        if t:
+                            lignes_pdf.extend(t.split('\n'))
 
                 annee_ref = 2026
                 try:
@@ -165,44 +165,39 @@ with tab_dispo:
                     mots_agent = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 2]
                     if not mots_agent:
                         continue
-                    
-                    nom_famille = mots_agent[0] # Ex: LISSÉ
-                    if nom_famille not in texte_global.upper():
-                        continue
 
-                    # Extraction via pdfplumber table par table ou texte structuré
-                    toutes_vacations = []
-                    heures_trouvees = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', texte_global)
-                    
-                    if len(heures_trouvees) >= 2:
-                        for idx_h in range(0, len(heures_trouvees) - 1, 2):
-                            h1, h2 = heures_trouvees[idx_h], heures_trouvees[idx_h+1]
-                            try:
-                                t1 = datetime.strptime(h1, '%H:%M')
-                                t2 = datetime.strptime(h2, '%H:%M')
-                                diff = (t2 - t1).total_seconds()
-                                if diff <= 0: diff += 24 * 3600
-                                duree = diff / 3600.0
-                                if 0.5 <= duree <= 15.0:
-                                    toutes_vacations.append((h1, h2, duree))
-                            except Exception:
-                                pass
-
+                    # Initialisation de la semaine à REPOS par défaut
                     semaine_agent = {}
-                    for i, j_target in enumerate(jours_semaine):
-                        if i < len(toutes_vacations):
-                            h1, h2, duree = toutes_vacations[i]
-                            semaine_agent[j_target] = {
-                                "statut": "TRAVAIL",
-                                "heure_fin_reelle": h2,
-                                "duree_existante": duree
-                            }
-                        else:
-                            semaine_agent[j_target] = {
-                                "statut": "REPOS",
-                                "heure_fin_reelle": "00:00",
-                                "duree_existante": 0.0
-                            }
+                    for j in jours_semaine:
+                        semaine_agent[j] = {
+                            "statut": "REPOS",
+                            "heure_fin_reelle": "00:00",
+                            "duree_existante": 0.0
+                        }
+
+                    # Analyse ligne par ligne : on cherche la ligne contenant l'agent et la date exacte
+                    for line in lignes_pdf:
+                        line_upper = line.upper()
+                        if any(mot in line_upper for mot in mots_agent):
+                            for j_target in jours_semaine:
+                                if j_target in line:
+                                    heures_ligne = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
+                                    if len(heures_ligne) >= 2:
+                                        h1, h2 = heures_ligne[0], heures_ligne[1]
+                                        try:
+                                            t1 = datetime.strptime(h1, '%H:%M')
+                                            t2 = datetime.strptime(h2, '%H:%M')
+                                            diff = (t2 - t1).total_seconds()
+                                            if diff <= 0: diff += 24 * 3600
+                                            duree = diff / 3600.0
+                                            if 0.5 <= duree <= 15.0:
+                                                semaine_agent[j_target] = {
+                                                    "statut": "TRAVAIL",
+                                                    "heure_fin_reelle": h2,
+                                                    "duree_existante": duree
+                                                }
+                                        except Exception:
+                                            pass
 
                     planning_agents[f"{ex_agent}_S{num_semaine}"] = semaine_agent
 
