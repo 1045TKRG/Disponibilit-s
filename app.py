@@ -337,3 +337,4 @@ with tab_cp_fin:
 with tab_maladies_fin:
     st.subheader("🎄 Maladies Fêtes de Fin d'Année")
     st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année", "Motif"]), num_rows="dynamic", key="mal5_simple")
+    
