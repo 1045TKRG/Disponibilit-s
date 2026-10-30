@@ -367,4 +367,67 @@ with tab_cp_fin:
         else:
             st.info("Aucun congé ne correspond aux dates cibles (24, 25, 31 décembre ou 1er janvier).")
     else:
-    ...
+        st.info("Remplissez ou importez l'historique sur 5 ans pour lancer l'analyse des récurrences.")
+
+# ---------------------------------------------------------
+# ONGLET 5 : MALADIES FÊTES DE FIN D'ANNÉE (5 ANS & RÉCURRENCES)
+# ---------------------------------------------------------
+with tab_maladies_fin:
+    st.subheader("🎄 Analyse sur 5 ans — Arrêts Maladie (Fêtes de Fin d'Année)")
+    col_mf1, col_mf2 = st.columns(2)
+    with col_mf1:
+        f_mal5_excel = st.file_uploader("Importer historique Excel (Maladies 5 ans)", type=["xlsx", "xls"], key="up_mal5_excel")
+    with col_mf2:
+        f_mal5_pdf = st.file_uploader("Importer historique PDF (Maladies 5 ans)", type=["pdf"], key="up_mal5_pdf")
+
+    data_mal5_defaut = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année", "Motif"])
+    if f_mal5_excel:
+        try:
+            data_mal5_defaut = pd.read_excel(f_mal5_excel)
+        except Exception as e:
+            st.error(f"Erreur : {e}")
+
+    edited_mal5 = st.data_editor(
+        data_mal5_defaut,
+        num_rows="dynamic",
+        hide_index=True,
+        key="editor_mal5_fetes"
+    )
+
+    st.markdown("---")
+    st.subheader("🔍 Filtrage & Détection des Récurrences (Maladies pendant les Fêtes)")
+    if not edited_mal5.empty and "Date Début" in edited_mal5.columns and "Date Fin" in edited_mal5.columns:
+        lignes_mal_fetes = []
+        for idx, row in edited_mal5.iterrows():
+            d_deb_str = str(row.get("Date Début", ""))
+            d_fin_str = str(row.get("Date Fin", ""))
+            agent_nom = str(row.get("Agent", "Inconnu"))
+            annee_val = str(row.get("Année", ""))
+            motif_val = str(row.get("Motif", ""))
+
+            try:
+                dt_deb = pd.to_datetime(d_deb_str, dayfirst=True, errors='coerce')
+                dt_fin = pd.to_datetime(d_fin_str, dayfirst=True, errors='coerce')
+
+                if pd.notna(dt_deb) and pd.notna(dt_fin):
+                    plage_dates = pd.date_range(start=dt_deb, end=dt_fin)
+                    touche_fetes = any((dt.month == 12 and dt.day in [24, 25, 31]) or (dt.month == 1 and dt.day == 1) for dt in plage_dates)
+                    
+                    if touche_fetes:
+                        annee_detectee = annee_val if annee_val else str(dt_deb.year)
+                        lignes_mal_fetes.append({"Agent": agent_nom, "Date Début": d_deb_str, "Date Fin": d_fin_str, "Année": annee_detectee, "Motif": motif_val})
+            except Exception:
+                pass
+
+        df_fetes_mal = pd.DataFrame(lignes_mal_fetes)
+        if not df_fetes_mal.empty:
+            st.success(f"🎯 {len(df_fetes_mal)} arrêt(s) maladie identifié(s) pendant les fêtes !")
+            st.dataframe(df_fetes_mal, hide_index=True)
+            recurrence_mal = df_fetes_mal["Agent"].value_counts().reset_index()
+            recurrence_mal.columns = ["Agent", "Nombre d'arrêts pendant les fêtes"]
+            st.dataframe(recurrence_mal, hide_index=True)
+            st.bar_chart(recurrence_mal.set_index("Agent"))
+        else:
+            st.info("Aucun arrêt maladie ne coïncide avec les fêtes de fin d'année.")
+    else:
+        st.info("Remplissez ou importez l'historique sur 5 ans pour lancer l'analyse.")
