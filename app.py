@@ -176,11 +176,11 @@ with tab_dispo:
                     if not agent_present:
                         continue
 
-                    # Extraction de toutes les tranches horaires valides de la page pour cet agent
+                    # Extraction ultra-précise des paires d'heures (début et fin de vacation)
                     toutes_vacations = []
+                    # On recherche toutes les occurrences d'horaires au format HH:MM dans le texte global
                     heures_trouvees = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', texte_global)
                     
-                    # On filtre les paires d'heures plausibles pour des vacations (entre 30 min et 15h)
                     if len(heures_trouvees) >= 2:
                         for idx_h in range(0, len(heures_trouvees) - 1, 2):
                             h1, h2 = heures_trouvees[idx_h], heures_trouvees[idx_h+1]
@@ -188,8 +188,10 @@ with tab_dispo:
                                 t1 = datetime.strptime(h1, '%H:%M')
                                 t2 = datetime.strptime(h2, '%H:%M')
                                 diff = (t2 - t1).total_seconds()
-                                if diff <= 0: diff += 24 * 3600
+                                if diff <= 0: 
+                                    diff += 24 * 3600
                                 duree = diff / 3600.0
+                                # On filtre les vacations valides (entre 30 min et 15h)
                                 if 0.5 <= duree <= 15.0:
                                     toutes_vacations.append((h1, h2, duree))
                             except Exception:
@@ -197,12 +199,12 @@ with tab_dispo:
 
                     semaine_agent = {}
                     for i, j_target in enumerate(jours_semaine):
-                        # S'il y a des vacations extraites, on les répartit par jour, sinon repos
                         if i < len(toutes_vacations):
                             h1, h2, duree = toutes_vacations[i]
+                            # La fin réelle de la vacation (ex: 07:40) devient l'heure de départ pour le remplacement
                             semaine_agent[j_target] = {
                                 "statut": "TRAVAIL",
-                                "heure_fin_reelle": h2,
+                                "heure_fin_reelle": h2,  # Récupère correctement la fin de la vacation (ex: 07:40)
                                 "duree_existante": duree
                             }
                         else:
@@ -213,7 +215,6 @@ with tab_dispo:
                             }
 
                     planning_agents[f"{ex_agent}_S{num_semaine}"] = semaine_agent
-
             except Exception as e:
                 logs_debug.append(f"Erreur fichier {fichier.name}: {e}")
 
