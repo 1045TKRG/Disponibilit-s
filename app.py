@@ -147,7 +147,7 @@ with tab_dispo:
                 reader = pypdf.PdfReader(fichier)
                 texte_global = ""
                 for page in reader.pages:
-                    t = page.extract_text()
+                    t = page.extract_text(extraction_mode="layout") or page.extract_text()
                     if t:
                         texte_global += t + "\n"
 
@@ -162,23 +162,15 @@ with tab_dispo:
                 jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
 
                 for ex_agent in df_agents["Agent"].unique():
-                    # Nettoyage et découpage du nom de l'agent (ex: "Lissé SAM Monique" -> recherche de "MONIQUE" et "LISSE")
                     mots_Agent = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 2]
                     if not mots_Agent:
                         continue
 
-                    # On cherche si l'agent est présent dans le texte global du PDF
-                    agent_present = all(mot in texte_global.upper() for mot in mots_Agent[:1]) # Souverain sur le nom de famille
-                    if not agent_present:
-                        # Test souple alternatif
-                        agent_present = any(mot in texte_global.upper() for mot in mots_Agent)
-
-                    if not agent_present:
+                    if not any(mot in texte_global.upper() for mot in mots_Agent):
                         continue
 
-                    # Extraction ultra-précise des paires d'heures (début et fin de vacation)
+                    # Extraction ultra-ciblée des paires d'heures réelles de vacation
                     toutes_vacations = []
-                    # On recherche toutes les occurrences d'horaires au format HH:MM dans le texte global
                     heures_trouvees = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', texte_global)
                     
                     if len(heures_trouvees) >= 2:
@@ -191,8 +183,8 @@ with tab_dispo:
                                 if diff <= 0: 
                                     diff += 24 * 3600
                                 duree = diff / 3600.0
-                                # On filtre les vacations valides (entre 30 min et 15h)
-                                if 0.5 <= duree <= 15.0:
+                                # Filtrage strict : une vacation valide dure entre 1h et 12h max
+                                if 1.0 <= duree <= 12.0:
                                     toutes_vacations.append((h1, h2, duree))
                             except Exception:
                                 pass
@@ -201,10 +193,9 @@ with tab_dispo:
                     for i, j_target in enumerate(jours_semaine):
                         if i < len(toutes_vacations):
                             h1, h2, duree = toutes_vacations[i]
-                            # La fin réelle de la vacation (ex: 07:40) devient l'heure de départ pour le remplacement
                             semaine_agent[j_target] = {
                                 "statut": "TRAVAIL",
-                                "heure_fin_reelle": h2,  # Récupère correctement la fin de la vacation (ex: 07:40)
+                                "heure_fin_reelle": h2,
                                 "duree_existante": duree
                             }
                         else:
@@ -215,6 +206,7 @@ with tab_dispo:
                             }
 
                     planning_agents[f"{ex_agent}_S{num_semaine}"] = semaine_agent
+
             except Exception as e:
                 logs_debug.append(f"Erreur fichier {fichier.name}: {e}")
 
