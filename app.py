@@ -144,12 +144,16 @@ with tab_dispo:
             num_semaine = int(match_semaine.group(1)) if match_semaine else 43
 
             try:
-                lignes_pdf = []
+                toutes_les_lignes_tableau = []
                 with pdfplumber.open(fichier) as pdf:
                     for page in pdf.pages:
-                        t = page.extract_text()
-                        if t:
-                            lignes_pdf.extend(t.split('\n'))
+                        tables = page.extract_tables()
+                        for table in tables:
+                            for row in table:
+                                # On nettoie les cellules vides
+                                ligne_nette = [str(cell).strip() for cell in row if cell is not None and str(cell).strip() != ""]
+                                if ligne_nette:
+                                    toutes_les_lignes_tableau.append(" ".join(ligne_nette))
 
                 annee_ref = 2026
                 try:
@@ -165,8 +169,8 @@ with tab_dispo:
                     mots_agent = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 2]
                     if not mots_agent:
                         continue
+                    nom_famille = mots_agent[0]
 
-                    # Initialisation de la semaine à REPOS par défaut
                     semaine_agent = {}
                     for j in jours_semaine:
                         semaine_agent[j] = {
@@ -175,29 +179,30 @@ with tab_dispo:
                             "duree_existante": 0.0
                         }
 
-                    # Analyse ligne par ligne : on cherche la ligne contenant l'agent et la date exacte
-                    for line in lignes_pdf:
+                    for line in toutes_les_lignes_tableau:
                         line_upper = line.upper()
-                        if any(mot in line_upper for mot in mots_agent):
-                            for j_target in jours_semaine:
-                                if j_target in line:
-                                    heures_ligne = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
-                                    if len(heures_ligne) >= 2:
-                                        h1, h2 = heures_ligne[0], heures_ligne[1]
-                                        try:
-                                            t1 = datetime.strptime(h1, '%H:%M')
-                                            t2 = datetime.strptime(h2, '%H:%M')
-                                            diff = (t2 - t1).total_seconds()
-                                            if diff <= 0: diff += 24 * 3600
-                                            duree = diff / 3600.0
-                                            if 0.5 <= duree <= 15.0:
-                                                semaine_agent[j_target] = {
-                                                    "statut": "TRAVAIL",
-                                                    "heure_fin_reelle": h2,
-                                                    "duree_existante": duree
-                                                }
-                                        except Exception:
-                                            pass
+                        if nom_famille in line_upper:
+                            match_date = re.search(r'([0-3]?[0-9]/[0-1]?[0-9]/202[6-9])', line)
+                            heures = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
+                            
+                            if match_date and len(heures) >= 2:
+                                date_str = match_date.group(1)
+                                if date_str in semaine_agent:
+                                    h1, h2 = heures[0], heures[1]
+                                    try:
+                                        t1 = datetime.strptime(h1, '%H:%M')
+                                        t2 = datetime.strptime(h2, '%H:%M')
+                                        diff = (t2 - t1).total_seconds()
+                                        if diff <= 0: diff += 24 * 3600
+                                        duree = diff / 3600.0
+                                        if 0.5 <= duree <= 15.0:
+                                            semaine_agent[date_str] = {
+                                                "statut": "TRAVAIL",
+                                                "heure_fin_reelle": h2,
+                                                "duree_existante": duree
+                                            }
+                                    except Exception:
+                                        pass
 
                     planning_agents[f"{ex_agent}_S{num_semaine}"] = semaine_agent
 
@@ -251,63 +256,3 @@ with tab_dispo:
                         h_faites_fmt = decimal_to_hm(duree_existante)
                         creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
                         opportunite = "🔴 Complet (10h atteint)"
-                    else:
-                        heures_restantes = max(0.0, 10.0 - duree_existante)
-                        duree_fmt = decimal_to_hm(heures_restantes)
-                        creneau_texte = f"{duree_fmt} max ce jour (entre {heure_fin} à 00:00)"
-                        opportunite = "possibilité de faire travailler l’agent"
-                
-                tableau_resultats.append({
-                    "Semaine": f"S{num_semaine}",
-                    "Contrat": contrat_nom,
-                    "Agent": agent_nom,
-                    "Date": d,
-                    "Type d'opportunité": opportunite,
-                    "Créneau horaire / Heures possibles": creneau_texte,
-                    "Dernier recours": ""
-                })
-
-    if tableau_resultats:
-        df_table = pd.DataFrame(tableau_resultats)
-        edited_df = st.data_editor(
-            df_table,
-            column_config={
-                "Dernier recours": st.column_config.TextColumn(
-                    "Dernier recours (Saisie quotidienne)",
-                    max_chars=150
-                )
-            },
-            disabled=["Semaine", "Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
-            hide_index=True,
-            key="editor_dispo"
-        )
-        
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
-        
-        st.download_button(
-            label="📥 Télécharger le rapport (Excel)",
-            data=output.getvalue(),
-            file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-# ---------------------------------------------------------
-# AUTRES ONGLETS (CP & Maladies standards)
-# ---------------------------------------------------------
-with tab_cp:
-    st.subheader("🏖️ Suivi des Congés Payés (CP)")
-    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Type de Congé", "Statut"]), num_rows="dynamic", key="cp_simple")
-
-with tab_maladies:
-    st.subheader("🏥 Suivi des Arrêts Maladie")
-    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Motif", "Commentaire"]), num_rows="dynamic", key="mal_simple")
-
-with tab_cp_fin:
-    st.subheader("🎄 CP Fêtes de Fin d'Année")
-    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année"]), num_rows="dynamic", key="cp5_simple")
-
-with tab_maladies_fin:
-    st.subheader("🎄 Maladies Fêtes de Fin d'Année")
-    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année", "Motif"]), num_rows="dynamic", key="mal5_simple")
