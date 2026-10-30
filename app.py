@@ -125,14 +125,6 @@ with tab_dispo:
 
     semaine_selectionnee = st.sidebar.selectbox("3. Semaine à afficher en priorité", ["S43", "S44", "Les deux"], key="semaine_dispo")
 
-    def decimal_to_hm(heures_dec):
-        h = int(heures_dec)
-        m = int(round((heures_dec - h) * 60))
-        if m == 60:
-            h += 1
-            m = 0
-        return f"{h}h{m:02d}"
-
     planning_agents = {}
 
     if fichiers_planning:
@@ -141,12 +133,12 @@ with tab_dispo:
             num_semaine = int(match_semaine.group(1)) if match_semaine else 43
 
             try:
-                lignes_pdf = []
+                texte_pdf_complet = ""
                 with pdfplumber.open(fichier) as pdf:
                     for page in pdf.pages:
                         t = page.extract_text()
                         if t:
-                            lignes_pdf.extend(t.split('\n'))
+                            texte_pdf_complet += t + "\n"
 
                 annee_ref = 2026
                 try:
@@ -171,27 +163,27 @@ with tab_dispo:
                             "creneau": "Journée complète (00h00 - 24h00)"
                         }
 
-                    for line in lignes_pdf:
-                        line_upper = line.upper()
-                        if nom_famille in line_upper:
-                            match_date = re.search(r'([0-3]?[0-9]/[0-1]?[0-9]/202[6-9])', line)
-                            heures = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
-                            
-                            if match_date and len(heures) >= 2:
-                                date_str = match_date.group(1)
-                                if date_str in semaine_agent:
-                                    h1, h2 = heures[0], heures[1]
-                                    semaine_agent[date_str] = {
-                                        "statut": "🔴 Occupé / Travaillé",
-                                        "creneau": f"Vacation : {h1} - {h2}"
-                                    }
+                    # Si le nom de famille est présent dans le PDF, on cherche les lignes associées
+                    if nom_famille in texte_pdf_complet.upper():
+                        lignes = texte_pdf_complet.split('\n')
+                        for line in lignes:
+                            if nom_famille in line.upper():
+                                match_date = re.search(r'([0-3]?[0-9]/[0-1]?[0-9]/202[6-9])', line)
+                                heures = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
+                                if match_date and len(heures) >= 2:
+                                    date_str = match_date.group(1)
+                                    if date_str in semaine_agent:
+                                        semaine_agent[date_str] = {
+                                            "statut": "🔴 Occupé / Travaillé",
+                                            "creneau": f"Vacation : {heures[0]} - {heures[1]}"
+                                        }
 
                     planning_agents[f"{ex_agent}_S{num_semaine}"] = semaine_agent
             except Exception:
                 pass
 
     st.subheader("📋 Tableau de Suivi des Disponibilités & Remplacements")
-    st.info("💡 **Astuce :** Glissez vos PDF Comète à gauche. Le tableau ci-dessous se remplit automatiquement, et vous pouvez modifier directement n'importe quelle cellule si besoin avant de télécharger le rapport final.")
+    st.info("💡 **Astuce :** Le tableau ci-dessous charge vos agents. Vous pouvez modifier directement les statuts et les créneaux dans les cellules modifiables si le PDF nécessite un ajustement.")
 
     tableau_resultats = []
     tous_agents = df_agents[["Contrat", "Agent"]].drop_duplicates().to_dict(orient="records")
@@ -245,13 +237,13 @@ with tab_dispo:
             },
             disabled=["Semaine", "Contrat", "Agent", "Date"],
             hide_index=True,
-            key="editor_dispo_pdf"
+            key="editor_dispo_pdf_v2"
         )
         
         st.markdown("---")
         col1, col2 = st.columns([2, 1])
         with col1:
-            st.success("✅ Vos plannings PDF sont pris en charge. Ajustez les lignes directement dans le tableau ci-dessus si nécessaire.")
+            st.success("✅ Tableau interactif prêt. Vous pouvez ajuster les statuts et horaires directement à l'écran.")
         with col2:
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
