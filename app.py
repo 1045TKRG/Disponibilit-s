@@ -1,7 +1,5 @@
 import streamlit as st
 import pandas as pd
-import pdfplumber
-import re
 from datetime import datetime, timedelta
 from io import BytesIO
 
@@ -82,11 +80,12 @@ with tab_dispo:
         type=["xlsx", "xls"],
         key="excel_dispo"
     )
-    fichiers_planning = st.sidebar.file_uploader(
-        "2. Plannings PDF Comète (Multi-contrats)", 
-        type=["pdf"], 
-        accept_multiple_files=True,
-        key="pdf_dispo"
+    
+    uploaded_planning_excel = st.sidebar.file_uploader(
+        "2. Importer un Planning Excel/CSV (Optionnel)", 
+        type=["xlsx", "xls", "csv"],
+        key="planning_excel_propre",
+        help="Importez un fichier de planning pour un affichage instantané."
     )
 
     def charger_referentiel(excel_file):
@@ -125,133 +124,90 @@ with tab_dispo:
 
     semaine_selectionnee = st.sidebar.selectbox("3. Semaine à afficher en priorité", ["S43", "S44", "Les deux"], key="semaine_dispo")
 
-    planning_agents = {}
-
-    if fichiers_planning:
-        for fichier in fichiers_planning:
-            match_semaine = re.search(r'S([0-9]{1,2})', fichier.name.upper())
-            num_semaine = int(match_semaine.group(1)) if match_semaine else 43
-
-            try:
-                texte_pdf_complet = ""
-                with pdfplumber.open(fichier) as pdf:
-                    for page in pdf.pages:
-                        t = page.extract_text()
-                        if t:
-                            texte_pdf_complet += t + "\n"
-
-                annee_ref = 2026
-                try:
-                    start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
-                except Exception:
-                    jan4 = datetime(annee_ref, 1, 4)
-                    start_week1 = jan4 - timedelta(days=jan4.weekday())
-                    start_target = start_week1 + timedelta(weeks=num_semaine - 1)
-                
-                jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
-
-                for ex_agent in df_agents["Agent"].unique():
-                    mots_agent = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 2]
-                    if not mots_agent:
-                        continue
-                    nom_famille = mots_agent[0]
-
-                    semaine_agent = {}
-                    for j in jours_semaine:
-                        semaine_agent[j] = {
-                            "statut": "🟢 Jour de Repos",
-                            "creneau": "Journée complète (00h00 - 24h00)"
-                        }
-
-                    # Si le nom de famille est présent dans le PDF, on cherche les lignes associées
-                    if nom_famille in texte_pdf_complet.upper():
-                        lignes = texte_pdf_complet.split('\n')
-                        for line in lignes:
-                            if nom_famille in line.upper():
-                                match_date = re.search(r'([0-3]?[0-9]/[0-1]?[0-9]/202[6-9])', line)
-                                heures = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
-                                if match_date and len(heures) >= 2:
-                                    date_str = match_date.group(1)
-                                    if date_str in semaine_agent:
-                                        semaine_agent[date_str] = {
-                                            "statut": "🔴 Occupé / Travaillé",
-                                            "creneau": f"Vacation : {heures[0]} - {heures[1]}"
-                                        }
-
-                    planning_agents[f"{ex_agent}_S{num_semaine}"] = semaine_agent
-            except Exception:
-                pass
-
     st.subheader("📋 Tableau de Suivi des Disponibilités & Remplacements")
-    st.info("💡 **Astuce :** Le tableau ci-dessous charge vos agents. Vous pouvez modifier directement les statuts et les créneaux dans les cellules modifiables si le PDF nécessite un ajustement.")
-
-    tableau_resultats = []
-    tous_agents = df_agents[["Contrat", "Agent"]].drop_duplicates().to_dict(orient="records")
-    semaines_tableau = [43, 44] if semaine_selectionnee == "Les deux" else [int(semaine_selectionnee.replace('S', ''))]
-
-    for num_semaine in semaines_tableau:
-        annee_ref = 2026
+    
+    if uploaded_planning_excel:
         try:
-            start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
-        except Exception:
-            jan4 = datetime(annee_ref, 1, 4)
-            start_week1 = jan4 - timedelta(days=jan4.weekday())
-            start_target = start_week1 + timedelta(weeks=num_semaine - 1)
+            if uploaded_planning_excel.name.endswith('.csv'):
+                df_table = pd.read_csv(uploaded_planning_excel)
+            else:
+                df_table = pd.read_excel(uploaded_planning_excel)
+            st.success("✅ Planning chargé avec succès depuis votre fichier !")
+        except Exception as e:
+            st.error(f"Erreur lors de la lecture du fichier : {e}")
+            df_table = pd.DataFrame()
+    else:
+        st.info("💡 **Mode Rapide :** Modifiez directement les statuts et les créneaux dans le tableau ci-dessous, puis téléchargez votre rapport Excel.")
         
-        jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
+        tableau_resultats = []
+        tous_agents = df_agents[["Contrat", "Agent"]].drop_duplicates().to_dict(orient="records")
+        semaines_tableau = [43, 44] if semaine_selectionnee == "Les deux" else [int(semaine_selectionnee.replace('S', ''))]
 
-        for item in tous_agents:
-            contrat_nom = item["Contrat"]
-            agent_nom = item["Agent"]
+        for num_semaine in semaines_tableau:
+            annee_ref = 2026
+            try:
+                start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
+            except Exception:
+                jan4 = datetime(annee_ref, 1, 4)
+                start_week1 = jan4 - timedelta(days=jan4.weekday())
+                start_target = start_week1 + timedelta(weeks=num_semaine - 1)
             
-            cle_dict = f"{agent_nom}_S{num_semaine}"
-            matched_schedule = planning_agents.get(cle_dict)
-                    
-            if not matched_schedule:
-                matched_schedule = {j: {"statut": "🟢 Jour de Repos", "creneau": "Journée complète (00h00 - 24h00)"} for j in jours_defaut}
+            jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
 
-            for d in sorted(matched_schedule.keys(), key=lambda x: datetime.strptime(x, '%d/%m/%Y')):
-                info = matched_schedule[d]
-                tableau_resultats.append({
-                    "Semaine": f"S{num_semaine}",
-                    "Contrat": contrat_nom,
-                    "Agent": agent_nom,
-                    "Date": d,
-                    "Statut / Disponibilité": info["statut"],
-                    "Créneaux / Horaires": info["creneau"],
-                    "Notes de Remplacement": ""
-                })
-
-    if tableau_resultats:
+            for item in tous_agents:
+                contrat_nom = item["Contrat"]
+                agent_nom = item["Agent"]
+                
+                for d in jours_defaut:
+                    tableau_resultats.append({
+                        "Semaine": f"S{num_semaine}",
+                        "Contrat": contrat_nom,
+                        "Agent": agent_nom,
+                        "Date": d,
+                        "Statut / Disponibilité": "🟢 Jour de Repos",
+                        "Créneaux / Horaires de remplacement": "Journée complète (00h00 - 24h00)",
+                        "Dernier recours": ""
+                    })
         df_table = pd.DataFrame(tableau_resultats)
+
+    if not df_table.empty:
         edited_df = st.data_editor(
             df_table,
             column_config={
+                "Créneaux / Horaires de remplacement": st.column_config.TextColumn(
+                    "Créneaux / Horaires de remplacement",
+                    help="Saisir les horaires ou commentaires",
+                    max_chars=200
+                ),
                 "Statut / Disponibilité": st.column_config.SelectboxColumn(
                     "Statut / Disponibilité",
-                    options=["🟢 Jour de Repos", "🟡 Partiellement disponible", "🔴 Occupé / Travaillé", "Remplacé"],
+                    options=[
+                        "🟢 Jour de Repos", 
+                        "🟡 Partiellement disponible", 
+                        "🔴 Occupé / Travaillé", 
+                        "Remplacé"
+                    ],
                     required=True
-                ),
-                "Créneaux / Horaires": st.column_config.TextColumn("Créneaux / Horaires", max_chars=150),
-                "Notes de Remplacement": st.column_config.TextColumn("Notes de Remplacement", max_chars=150)
+                )
             },
             disabled=["Semaine", "Contrat", "Agent", "Date"],
             hide_index=True,
-            key="editor_dispo_pdf_v2"
+            key="editor_dispo_stable"
         )
         
         st.markdown("---")
         col1, col2 = st.columns([2, 1])
         with col1:
-            st.success("✅ Tableau interactif prêt. Vous pouvez ajuster les statuts et horaires directement à l'écran.")
+            st.success("✅ Application prête pour la saisie et le suivi rapide.")
         with col2:
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
+            processed_data = output.getvalue()
             
             st.download_button(
                 label="📥 Télécharger le rapport (Excel)",
-                data=output.getvalue(),
+                data=processed_data,
                 file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
