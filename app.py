@@ -136,13 +136,6 @@ with tab_dispo:
     planning_agents = {}
     logs_debug = []
 
-    def noms_sont_compatibles(excel_name, pdf_text):
-        mots_excel = [w.upper() for w in re.findall(r'\w+', excel_name) if len(w) > 2]
-        p_upper = pdf_text.upper()
-        if not mots_excel:
-            return False
-        return any(mot in p_upper for mot in mots_excel)
-
     if fichiers_planning:
         for fichier in fichiers_planning:
             match_semaine = re.search(r'S([0-9]{1,2})', fichier.name.upper())
@@ -152,13 +145,11 @@ with tab_dispo:
 
             try:
                 reader = pypdf.PdfReader(fichier)
-                texte_par_page = []
+                texte_global = ""
                 for page in reader.pages:
-                    t = page.extract_text(extraction_mode="layout") or page.extract_text()
+                    t = page.extract_text()
                     if t:
-                        texte_par_page.append(t)
-                
-                texte_global = "\n".join(texte_par_page)
+                        texte_global += t + "\n"
 
                 annee_ref = 2026
                 try:
@@ -171,57 +162,48 @@ with tab_dispo:
                 jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
 
                 for ex_agent in df_agents["Agent"].unique():
-                    if not noms_sont_compatibles(ex_agent, texte_global):
+                    # Nettoyage et découpage du nom de l'agent (ex: "Lissé SAM Monique" -> recherche de "MONIQUE" et "LISSE")
+                    mots_Agent = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 2]
+                    if not mots_Agent:
                         continue
 
-                    mots_cles = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 2]
-                    
-                    lignes_agent = []
-                    for block in texte_par_page:
-                        for line in block.split('\n'):
-                            line_upper = line.upper()
-                            if any(m in line_upper for m in mots_cles):
-                                lignes_agent.append(line)
+                    # On cherche si l'agent est présent dans le texte global du PDF
+                    agent_present = all(mot in texte_global.upper() for mot in mots_Agent[:1]) # Souverain sur le nom de famille
+                    if not agent_present:
+                        # Test souple alternatif
+                        agent_present = any(mot in texte_global.upper() for mot in mots_Agent)
 
-                    # Extraction rigoureuse des paires d'heures par jour (7 jours max)
-                    vacations_par_jour = {i: [] for i in range(7)}
-                    jour_courant = 0
+                    if not agent_present:
+                        continue
+
+                    # Extraction de toutes les tranches horaires valides de la page pour cet agent
+                    toutes_vacations = []
+                    heures_trouvees = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', texte_global)
                     
-                    source = lignes_agent if lignes_agent else texte_par_page
-                    for block in source:
-                        lignes_texte = block.split('\n') if isinstance(block, str) else [block]
-                        for line in lignes_texte:
-                            hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
-                            if len(hours) >= 2:
-                                for idx_h in range(0, len(hours) - 1, 2):
-                                    h1, h2 = hours[idx_h], hours[idx_h+1]
-                                    try:
-                                        t1 = datetime.strptime(h1, '%H:%M')
-                                        t2 = datetime.strptime(h2, '%H:%M')
-                                        diff = (t2 - t1).total_seconds()
-                                        if diff <= 0: diff += 24 * 3600
-                                        duree = diff / 3600.0
-                                        if 0.5 <= duree <= 15.0:
-                                            # On s'assure de ranger la vacation dans son jour exact sans décalage
-                                            while jour_courant < 7 and len(vacations_par_jour[jour_courant]) >= 2:
-                                                jour_courant += 1
-                                            if jour_courant < 7:
-                                                vacations_par_jour[jour_courant].append((h1, h2, duree))
-                                    except Exception:
-                                        pass
-                        if jour_courant < 6:
-                            jour_courant += 1
+                    # On filtre les paires d'heures plausibles pour des vacations (entre 30 min et 15h)
+                    if len(heures_trouvees) >= 2:
+                        for idx_h in range(0, len(heures_trouvees) - 1, 2):
+                            h1, h2 = heures_trouvees[idx_h], heures_trouvees[idx_h+1]
+                            try:
+                                t1 = datetime.strptime(h1, '%H:%M')
+                                t2 = datetime.strptime(h2, '%H:%M')
+                                diff = (t2 - t1).total_seconds()
+                                if diff <= 0: diff += 24 * 3600
+                                duree = diff / 3600.0
+                                if 0.5 <= duree <= 15.0:
+                                    toutes_vacations.append((h1, h2, duree))
+                            except Exception:
+                                pass
 
                     semaine_agent = {}
                     for i, j_target in enumerate(jours_semaine):
-                        v_list = vacations_par_jour.get(i, [])
-                        if v_list:
-                            duree_totale = sum(v[2] for v in v_list)
-                            derniere_fin = v_list[-1][1]
+                        # S'il y a des vacations extraites, on les répartit par jour, sinon repos
+                        if i < len(toutes_vacations):
+                            h1, h2, duree = toutes_vacations[i]
                             semaine_agent[j_target] = {
                                 "statut": "TRAVAIL",
-                                "heure_fin_reelle": derniere_fin,
-                                "duree_existante": duree_totale
+                                "heure_fin_reelle": h2,
+                                "duree_existante": duree
                             }
                         else:
                             semaine_agent[j_target] = {
