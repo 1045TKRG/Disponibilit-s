@@ -183,8 +183,10 @@ with tab_dispo:
                             if any(m in line_upper for m in mots_cles):
                                 lignes_agent.append(line)
 
-                    # Récupération de toutes les paires d'heures valides associées à l'agent
-                    toutes_vacations = []
+                    # Extraction rigoureuse des paires d'heures par jour (7 jours max)
+                    vacations_par_jour = {i: [] for i in range(7)}
+                    jour_courant = 0
+                    
                     source = lignes_agent if lignes_agent else texte_par_page
                     for block in source:
                         lignes_texte = block.split('\n') if isinstance(block, str) else [block]
@@ -200,19 +202,26 @@ with tab_dispo:
                                         if diff <= 0: diff += 24 * 3600
                                         duree = diff / 3600.0
                                         if 0.5 <= duree <= 15.0:
-                                            toutes_vacations.append((h1, h2, duree))
+                                            # On s'assure de ranger la vacation dans son jour exact sans décalage
+                                            while jour_courant < 7 and len(vacations_par_jour[jour_courant]) >= 2:
+                                                jour_courant += 1
+                                            if jour_courant < 7:
+                                                vacations_par_jour[jour_courant].append((h1, h2, duree))
                                     except Exception:
                                         pass
+                        if jour_courant < 6:
+                            jour_courant += 1
 
-                    # Répartition intelligente jour par jour sans écraser par défaut
                     semaine_agent = {}
                     for i, j_target in enumerate(jours_semaine):
-                        if i < len(toutes_vacations):
-                            h1, h2, duree = toutes_vacations[i]
+                        v_list = vacations_par_jour.get(i, [])
+                        if v_list:
+                            duree_totale = sum(v[2] for v in v_list)
+                            derniere_fin = v_list[-1][1]
                             semaine_agent[j_target] = {
                                 "statut": "TRAVAIL",
-                                "heure_fin_reelle": h2,
-                                "duree_existante": duree
+                                "heure_fin_reelle": derniere_fin,
+                                "duree_existante": duree_totale
                             }
                         else:
                             semaine_agent[j_target] = {
