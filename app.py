@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import pdfplumber
+import re
 from datetime import datetime, timedelta
 from io import BytesIO
 
@@ -80,12 +82,11 @@ with tab_dispo:
         type=["xlsx", "xls"],
         key="excel_dispo"
     )
-    
-    uploaded_planning_excel = st.sidebar.file_uploader(
-        "2. Planning Semaine (.xlsx ou .csv propre)", 
-        type=["xlsx", "xls", "csv"],
-        key="planning_excel_propre",
-        help="Importez un fichier Excel contenant vos données de planning pour éviter les erreurs de lecture PDF."
+    fichiers_planning = st.sidebar.file_uploader(
+        "2. Plannings PDF Comète (Multi-contrats)", 
+        type=["pdf"], 
+        accept_multiple_files=True,
+        key="pdf_dispo"
     )
 
     def charger_referentiel(excel_file):
@@ -124,92 +125,178 @@ with tab_dispo:
 
     semaine_selectionnee = st.sidebar.selectbox("3. Semaine à afficher en priorité", ["S43", "S44", "Les deux"], key="semaine_dispo")
 
-    st.subheader("📋 Tableau de Suivi des Disponibilités & Remplacements")
-    
-    if uploaded_planning_excel:
-        try:
-            if uploaded_planning_excel.name.endswith('.csv'):
-                df_table = pd.read_csv(uploaded_planning_excel)
-            else:
-                df_table = pd.read_excel(uploaded_planning_excel)
-            st.success("✅ Planning chargé avec succès depuis le fichier !")
-        except Exception as e:
-            st.error(f"Erreur lors de la lecture du fichier de planning : {e}")
-            df_table = pd.DataFrame()
-    else:
-        st.info("💡 **Astuce :** Pour un affichage instantané et sans erreur de vos plannings Comète, vous pouvez importer un fichier Excel de planning, ou utiliser le tableau interactif ci-dessous pour renseigner vos statuts et créneaux.")
-        
-        tableau_resultats = []
-        tous_agents = df_agents[["Contrat", "Agent"]].drop_duplicates().to_dict(orient="records")
-        semaines_tableau = [43, 44] if semaine_selectionnee == "Les deux" else [int(semaine_selectionnee.replace('S', ''))]
+    def decimal_to_hm(heures_dec):
+        h = int(heures_dec)
+        m = int(round((heures_dec - h) * 60))
+        if m == 60:
+            h += 1
+            m = 0
+        return f"{h}h{m:02d}"
 
-        for num_semaine in semaines_tableau:
-            annee_ref = 2026
+    planning_agents = {}
+    logs_debug = []
+
+    if fichiers_planning:
+        for fichier in fichiers_planning:
+            match_semaine = re.search(r'S([0-9]{1,2})', fichier.name.upper())
+            if not match_semaine:
+                match_semaine = re.search(r'2026([0-9]{2})', fichier.name.upper())
+            num_semaine = int(match_semaine.group(1)) if match_semaine else 43
+
             try:
-                start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
-            except Exception:
-                jan4 = datetime(annee_ref, 1, 4)
-                start_week1 = jan4 - timedelta(days=jan4.weekday())
-                start_target = start_week1 + timedelta(weeks=num_semaine - 1)
-            
-            jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
+                with pdfplumber.open(fichier) as pdf:
+                     texte_global = ""
+                     for page in pdf.pages:
+                         t = page.extract_text()
+                         if t:
+                             texte_global += t + "\n"
 
-            for item in tous_agents:
-                contrat_nom = item["Contrat"]
-                agent_nom = item["Agent"]
+                annee_ref = 2026
+                try:
+                    start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
+                except Exception:
+                    jan4 = datetime(annee_ref, 1, 4)
+                    start_week1 = jan4 - timedelta(days=jan4.weekday())
+                    start_target = start_week1 + timedelta(weeks=num_semaine - 1)
                 
-                for d in jours_defaut:
-                    tableau_resultats.append({
-                        "Semaine": f"S{num_semaine}",
-                        "Contrat": contrat_nom,
-                        "Agent": agent_nom,
-                        "Date": d,
-                        "Statut / Disponibilité": "🟢 Jour de Repos / Disponible",
-                        "Créneaux / Horaires de remplacement": ""
-                    })
-        df_table = pd.DataFrame(tableau_resultats)
+                jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
 
-    if not df_table.empty:
+                for ex_agent in df_agents["Agent"].unique():
+                    mots_agent = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 2]
+                    if not mots_agent:
+                        continue
+                    
+                    nom_famille = mots_agent[0] # Ex: LISSÉ
+                    if nom_famille not in texte_global.upper():
+                        continue
+
+                    # Extraction via pdfplumber table par table ou texte structuré
+                    toutes_vacations = []
+                    heures_trouvees = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', texte_global)
+                    
+                    if len(heures_trouvees) >= 2:
+                        for idx_h in range(0, len(heures_trouvees) - 1, 2):
+                            h1, h2 = heures_trouvees[idx_h], heures_trouvees[idx_h+1]
+                            try:
+                                t1 = datetime.strptime(h1, '%H:%M')
+                                t2 = datetime.strptime(h2, '%H:%M')
+                                diff = (t2 - t1).total_seconds()
+                                if diff <= 0: diff += 24 * 3600
+                                duree = diff / 3600.0
+                                if 0.5 <= duree <= 15.0:
+                                    toutes_vacations.append((h1, h2, duree))
+                            except Exception:
+                                pass
+
+                    semaine_agent = {}
+                    for i, j_target in enumerate(jours_semaine):
+                        if i < len(toutes_vacations):
+                            h1, h2, duree = toutes_vacations[i]
+                            semaine_agent[j_target] = {
+                                "statut": "TRAVAIL",
+                                "heure_fin_reelle": h2,
+                                "duree_existante": duree
+                            }
+                        else:
+                            semaine_agent[j_target] = {
+                                "statut": "REPOS",
+                                "heure_fin_reelle": "00:00",
+                                "duree_existante": 0.0
+                            }
+
+                    planning_agents[f"{ex_agent}_S{num_semaine}"] = semaine_agent
+
+            except Exception as e:
+                logs_debug.append(f"Erreur fichier {fichier.name}: {e}")
+
+    st.subheader("📋 Liste des Disponibilités & Opportunités")
+
+    tableau_resultats = []
+    tous_agents = df_agents[["Contrat", "Agent"]].drop_duplicates().to_dict(orient="records")
+    semaines_tableau = [43, 44] if semaine_selectionnee == "Les deux" else [int(semaine_selectionnee.replace('S', ''))]
+
+    for num_semaine in semaines_tableau:
+        annee_ref = 2026
+        try:
+            start_target = datetime.fromisocalendar(annee_ref, num_semaine, 1)
+        except Exception:
+            jan4 = datetime(annee_ref, 1, 4)
+            start_week1 = jan4 - timedelta(days=jan4.weekday())
+            start_target = start_week1 + timedelta(weeks=num_semaine - 1)
+        
+        jours_defaut = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
+
+        for item in tous_agents:
+            contrat_nom = item["Contrat"]
+            agent_nom = item["Agent"]
+            
+            cle_dict = f"{agent_nom}_S{num_semaine}"
+            matched_schedule = planning_agents.get(cle_dict)
+                    
+            if not matched_schedule:
+                matched_schedule = {j: {"statut": "REPOS", "heure_fin_reelle": "00:00", "duree_existante": 0.0} for j in jours_defaut}
+
+            dates_triees = sorted(matched_schedule.keys(), key=lambda x: datetime.strptime(x, '%d/%m/%Y'))
+            jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
+
+            for d in dates_triees:
+                info_jour = matched_schedule[d]
+                statut = info_jour["statut"]
+                
+                if statut == "REPOS":
+                    creneau_texte = "Journée complète (00h00 - 24h00)"
+                    if jours_repos_total == 1:
+                        creneau_texte += " — seul jour de repos hebdo"
+                    opportunite = "🟢 Jour de Repos"
+                else:
+                    duree_existante = info_jour["duree_existante"]
+                    heure_fin = info_jour["heure_fin_reelle"]
+                    
+                    if duree_existante >= 10.0:
+                        h_faites_fmt = decimal_to_hm(duree_existante)
+                        creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
+                        opportunite = "🔴 Complet (10h atteint)"
+                    else:
+                        heures_restantes = max(0.0, 10.0 - duree_existante)
+                        duree_fmt = decimal_to_hm(heures_restantes)
+                        creneau_texte = f"{duree_fmt} max ce jour (entre {heure_fin} à 00:00)"
+                        opportunite = "possibilité de faire travailler l’agent"
+                
+                tableau_resultats.append({
+                    "Semaine": f"S{num_semaine}",
+                    "Contrat": contrat_nom,
+                    "Agent": agent_nom,
+                    "Date": d,
+                    "Type d'opportunité": opportunite,
+                    "Créneau horaire / Heures possibles": creneau_texte,
+                    "Dernier recours": ""
+                })
+
+    if tableau_resultats:
+        df_table = pd.DataFrame(tableau_resultats)
         edited_df = st.data_editor(
             df_table,
             column_config={
-                "Créneaux / Horaires de remplacement": st.column_config.TextColumn(
-                    "Créneaux / Horaires de remplacement",
-                    help="Saisir les horaires ou commentaires de remplacement",
-                    max_chars=200
-                ),
-                "Statut / Disponibilité": st.column_config.SelectboxColumn(
-                    "Statut / Disponibilité",
-                    options=[
-                        "🟢 Jour de Repos / Disponible", 
-                        "🟡 Partiellement disponible", 
-                        "🔴 Occupé / Travaillé", 
-                        "Remplacé"
-                    ],
-                    required=True
+                "Dernier recours": st.column_config.TextColumn(
+                    "Dernier recours (Saisie quotidienne)",
+                    max_chars=150
                 )
             },
-            disabled=["Semaine", "Contrat", "Agent", "Date"],
+            disabled=["Semaine", "Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
             hide_index=True,
-            key="editor_dispo_stable"
+            key="editor_dispo"
         )
         
-        st.markdown("---")
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            st.success("✅ Tableau interactif prêt pour la gestion de vos remplacements.")
-        with col2:
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
-            processed_data = output.getvalue()
-            
-            st.download_button(
-                label="📥 Télécharger le rapport (Excel)",
-                data=processed_data,
-                file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
+        
+        st.download_button(
+            label="📥 Télécharger le rapport (Excel)",
+            data=output.getvalue(),
+            file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 # ---------------------------------------------------------
 # AUTRES ONGLETS (CP & Maladies standards)
