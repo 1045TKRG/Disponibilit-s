@@ -73,7 +73,7 @@ tab_dispo, tab_cp, tab_maladies, tab_cp_fin, tab_maladies_fin = st.tabs([
 ])
 
 # ---------------------------------------------------------
-# ONGLET 1 : DISPONIBILITÉS
+# ONGLET 1 : DISPONIBILITÉS (EXTRACTION PAR BLOC INDIVIDUEL)
 # ---------------------------------------------------------
 with tab_dispo:
     st.sidebar.header("📁 Données de la Semaine (Dispo)")
@@ -162,48 +162,74 @@ with tab_dispo:
                 
                 jours_semaine = [(start_target + timedelta(days=i)).strftime('%d/%m/%Y') for i in range(7)]
 
-                for ex_agent in df_agents["Agent"].unique():
+                # Analyse par blocs individuels pour chaque agent du référentiel
+                liste_tous_agents = df_agents["Agent"].unique()
+                
+                for i, ex_agent in enumerate(liste_tous_agents):
                     mots_agent = [w.upper() for w in re.findall(r'\w+', ex_agent) if len(w) > 2]
                     if not mots_agent:
                         continue
-                    
                     nom_famille = mots_agent[0]
+
                     semaine_agent = {}
-                    
                     for j in jours_semaine:
                         semaine_agent[j] = {"statut": "REPOS", "intervalles": []}
 
+                    # Trouver les lignes qui concernent cet agent spécifiquement dans le PDF
+                    agent_lignes = []
+                    capturing = False
+                    
                     for line in lignes_texte:
                         line_upper = line.upper()
                         if nom_famille in line_upper:
-                            hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
-                            if len(hours) >= 2:
-                                h1, h2 = hours[0], hours[1]
-                                try:
-                                    t1 = datetime.strptime(h1, '%H:%M')
-                                    t2 = datetime.strptime(h2, '%H:%M')
-                                    diff = (t2 - t1).total_seconds()
-                                    if diff <= 0:
-                                        diff += 24 * 3600
-                                    duree = diff / 3600.0
-                                    
-                                    if 1.0 <= duree <= 14.0:
-                                        for j_target in jours_semaine:
-                                            date_court = j_target[:5]
-                                            if date_court in line or j_target in line:
-                                                dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
-                                                dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
-                                                if dt_fin <= dt_deb:
-                                                    dt_fin += timedelta(days=1)
-                                                
-                                                semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
-                                except Exception:
-                                    pass
+                            capturing = True
+                            agent_lignes.append(line)
+                            continue
+                        
+                        if capturing:
+                            # Si on croise le nom d'un autre agent, on arrête la capture pour cet agent
+                            autre_agent_trouve = False
+                            for autre_ag in liste_tous_agents:
+                                if autre_ag != ex_agent:
+                                    mots_autre = [w.upper() for w in re.findall(r'\w+', autre_ag) if len(w) > 2]
+                                    if mots_autre and mots_autre[0] in line_upper:
+                                        autre_agent_trouve = True
+                                        break
+                            if autre_agent_trouve:
+                                capturing = False
+                            else:
+                                agent_lignes.append(line)
+
+                    # Analyser les lignes capturées pour cet agent
+                    for line in agent_lignes:
+                        hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
+                        if len(hours) >= 2:
+                            h1, h2 = hours[0], hours[1]
+                            try:
+                                t1 = datetime.strptime(h1, '%H:%M')
+                                t2 = datetime.strptime(h2, '%H:%M')
+                                diff = (t2 - t1).total_seconds()
+                                if diff <= 0:
+                                    diff += 24 * 3600
+                                duree = diff / 3600.0
+                                
+                                if 1.0 <= duree <= 14.0:
+                                    for j_target in jours_semaine:
+                                        date_court = j_target[:5] # ex: 19/10
+                                        if date_court in line or j_target in line:
+                                            dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
+                                            dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
+                                            if dt_fin <= dt_deb:
+                                                dt_fin += timedelta(days=1)
+                                            
+                                            semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
+                            except Exception:
+                                pass
 
                     planning_agents[f"{ex_agent}_S{num_semaine}"] = semaine_agent
 
             except Exception as e:
-                logs_debug.append(f"⚠️ Erreur de lecture sur {fichier.name} : {e}")
+                logs_debug.append(f"⚠️ Erreur sur {fichier.name} : {e}")
 
     st.subheader("📋 Liste des Disponibilités & Opportunités")
 
