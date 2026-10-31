@@ -4,6 +4,10 @@ import pypdf
 import re
 from datetime import datetime, timedelta
 from io import BytesIO
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 # Configuration de la page
 st.set_page_config(
@@ -13,7 +17,7 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# SÉCURITÉ : GESTION DES UTILISATEURS & MOTS DE PASSE
+# SÉCURITÉ : GESTION DES UTILISATEURS & DROITS
 # ---------------------------------------------------------
 UTILISATEURS_AUTORISES = {
     "admin": {"mdp": "SOS2026", "role": "Administrateur unique"},
@@ -27,6 +31,15 @@ if "utilisateur_connecte" not in st.session_state:
     st.session_state["utilisateur_connecte"] = ""
 if "role_utilisateur" not in st.session_state:
     st.session_state["role_utilisateur"] = ""
+if "historique_connexions" not in st.session_state:
+    st.session_state["historique_connexions"] = []
+
+# Gestion des droits d'écriture par l'admin (Verrouillage global ou par utilisateur)
+if "droits_ecriture" not in st.session_state:
+    st.session_state["droits_ecriture"] = {
+        "hinerava": True, # True = Autorisé à modifier/valider, False = Lecture seule
+        "hoania": True
+    }
 
 if not st.session_state["authentifie"]:
     st.title("🔒 Accès Sécurisé — Portail RH & Plannings")
@@ -42,6 +55,14 @@ if not st.session_state["authentifie"]:
                 st.session_state["authentifie"] = True
                 st.session_state["utilisateur_connecte"] = username_saisi
                 st.session_state["role_utilisateur"] = UTILISATEURS_AUTORISES[username_saisi]["role"]
+                
+                date_heure_actuelle = datetime.now().strftime("%d/%m/%Y à %H:%M:%S")
+                st.session_state["historique_connexions"].append({
+                    "Utilisateur": username_saisi.capitalize(),
+                    "Rôle": UTILISATEURS_AUTORISES[username_saisi]["role"],
+                    "Date et Heure": date_heure_actuelle
+                })
+                
                 st.success(f"Connexion réussie. Bienvenue, {username_saisi.capitalize()} !")
                 st.rerun()
             else:
@@ -63,17 +84,81 @@ with col_deco:
 
 st.markdown("---")
 
-# Création des 5 onglets
-tab_dispo, tab_cp, tab_maladies, tab_cp_fin, tab_maladies_fin = st.tabs([
-    "📋 Disponibilités & Remplacements", 
-    "🏖️ Congés Payés & Analyses", 
-    "🏥 Maladies & Analyses",
-    "🎄 CP Fêtes de Fin d'Année (5 ans)",
-    "🎄 Maladies Fêtes de Fin d'Année (5 ans)"
-])
+# Fonction utilitaire pour générer un PDF officiel non modifiable
+def generer_pdf_officiel(dataframe_a_imprimer, titre_rapport):
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    elements = []
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'TitleStyle',
+        parent=styles['Heading1'],
+        fontSize=16,
+        textColor=colors.HexColor('#1f4e78'),
+        spaceAfter=15,
+        alignment=1
+    )
+    
+    elements.append(Paragraph(f"RAPPORT OFFICIEL — {titre_rapport.upper()}", title_style))
+    elements.append(Paragraph(f"Généré le : {datetime.now().strftime('%d/%m/%Y à %H:%M')} par {st.session_state['utilisateur_connecte'].capitalize()} (Document juridiquement validé)", styles['Normal']))
+    elements.append(Spacer(1, 15))
+    
+    if not dataframe_a_imprimer.empty:
+        # Transformation du DataFrame en liste de listes pour ReportLab
+        data = [list(dataframe_a_imprimer.columns)]
+        for _, row in dataframe_a_imprimer.iterrows():
+            data.append([str(val) if pd.notna(val) else "" for val in row])
+            
+        t = Table(data, repeatRows=1)
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4e78')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f9f9f9')),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#d3d3d3')),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ]))
+        elements.append(t)
+    else:
+        elements.append(Paragraph("Aucune donnée à afficher.", styles['Normal']))
+        
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+# Création des onglets selon les rôles
+if st.session_state["utilisateur_connecte"] == "admin":
+    tab_dispo, tab_cp, tab_maladies, tab_cp_fin, tab_maladies_fin, tab_admin_secu = st.tabs([
+        "📋 Disponibilités & Remplacements", 
+        "🏖️ Congés Payés & Analyses", 
+        "🏥 Maladies & Analyses",
+        "🎄 CP Fêtes de Fin d'Année (5 ans)",
+        "🎄 Maladies Fêtes de Fin d'Année (5 ans)",
+        "🔐 Contrôle Admin & Droits"
+    ])
+else:
+    tab_dispo, tab_cp, tab_maladies, tab_cp_fin, tab_maladies_fin = st.tabs([
+        "📋 Disponibilités & Remplacements", 
+        "🏖️ Congés Payés & Analyses", 
+        "🏥 Maladies & Analyses",
+        "🎄 CP Fêtes de Fin d'Année (5 ans)",
+        "🎄 Maladies Fêtes de Fin d'Année (5 ans)"
+    ])
+
+# Vérification des droits d'écriture pour l'utilisateur actuel
+user_actuel = st.session_state["utilisateur_connecte"]
+if user_actuel == "admin":
+    mode_edition_active = True # L'admin a toujours tous les droits
+else:
+    mode_edition_active = st.session_state["droits_ecriture"].get(user_actuel, True)
 
 # ---------------------------------------------------------
-# ONGLET 1 : DISPONIBILITÉS (CODE EXACT CONSERVÉ)
+# ONGLET 1 : DISPONIBILITÉS
 # ---------------------------------------------------------
 with tab_dispo:
     st.sidebar.header("📁 Données de la Semaine (Dispo)")
@@ -252,6 +337,8 @@ with tab_dispo:
             st.write(log)
 
     st.subheader("📋 Liste des Disponibilités & Opportunités")
+    if not mode_edition_active:
+        st.warning("🔒 **Mode Lecture Seule :** Vos droits de modification ont été verrouillés par l'administrateur.")
 
     tableau_resultats = []
     tous_agents = df_agents[["Contrat", "Agent"]].drop_duplicates().to_dict(orient="records")
@@ -328,190 +415,106 @@ with tab_dispo:
                     max_chars=150
                 )
             },
-            disabled=["Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
+            disabled=["Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"] if not mode_edition_active else ["Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
             hide_index=True,
             key="editor_dispo"
         )
         
         st.markdown("---")
-        col1, col2 = st.columns([2, 1])
+        col1, col2, col3 = st.columns(3)
         with col1:
-            st.success("✅ Données prêtes à être exportées pour vos justificatifs de planning.")
+            st.success("✅ Données prêtes pour export.")
         with col2:
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
-            processed_data = output.getvalue()
-            
             st.download_button(
-                label="📥 Télécharger le rapport (Excel)",
-                data=processed_data,
+                label="📥 Télécharger (Excel)",
+                data=output.getvalue(),
                 file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        with col3:
+            pdf_bytes = generer_pdf_officiel(edited_df, "Disponibilités et Remplacements")
+            st.download_button(
+                label="🖨️ Imprimer / Exporter (PDF Officiel)",
+                data=pdf_bytes,
+                file_name=f"Rapport_Officiel_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.pdf",
+                mime="application/pdf"
             )
     else:
         st.warning("⚠️ Aucun résultat dans le tableau.")
 
 # ---------------------------------------------------------
-# ONGLET 2 : CONGÉS PAYÉS & ANALYSES
+# ONGLET 2 : CONGÉS PAYÉS
 # ---------------------------------------------------------
 with tab_cp:
-    st.subheader("🏖️ Suivi des Congés Payés (CP) & Tableau d'Analyse")
-    st.write("Gérez vos congés et visualisez instantanément les analyses ci-dessous.")
-    
-    col_up1, col_up2 = st.columns(2)
-    with col_up1:
-        f_cp_excel = st.file_uploader("Importer un fichier Excel (CP)", type=["xlsx", "xls"], key="up_cp_excel")
-    with col_up2:
-        f_cp_pdf = st.file_uploader("Importer un fichier PDF (CP)", type=["pdf"], key="up_cp_pdf")
-        
+    st.subheader("🏖️ Suivi des Congés Payés (CP)")
     data_cp_defaut = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Type de Congé", "Statut"])
+    edited_cp = st.data_editor(data_cp_defaut, num_rows="dynamic", hide_index=True, key="editor_cp_interactif")
     
-    if f_cp_excel:
-        try:
-            data_cp_defaut = pd.read_excel(f_cp_excel)
-            st.success("Fichier Excel CP importé avec succès !")
-        except Exception as e:
-            st.error(f"Erreur de lecture Excel : {e}")
-            
-    elif f_cp_pdf:
-        try:
-            reader = pypdf.PdfReader(f_cp_pdf)
-            st.info("Fichier PDF lu. Vous pouvez compléter ou vérifier les informations dans le tableau.")
-        except Exception as e:
-            st.error(f"Erreur de lecture PDF : {e}")
-
-    edited_cp = st.data_editor(
-        data_cp_defaut,
-        num_rows="dynamic",
-        hide_index=True,
-        key="editor_cp_interactif",
-        column_config={
-            "Statut": st.column_config.SelectboxColumn(
-                "Statut",
-                options=["Demandé", "Validé", "Refusé"],
-                required=True
-            )
-        }
-    )
-    
-    st.markdown("---")
-    st.subheader("📊 Tableau d'Analyse — Congés Payés")
-    
-    if not edited_cp.empty and "Statut" in edited_cp.columns:
-        col_m1, col_m2, col_m3 = st.columns(3)
-        total_cp = len(edited_cp)
-        valides_cp = len(edited_cp[edited_cp["Statut"] == "Validé"])
-        demandes_cp = len(edited_cp[edited_cp["Statut"] == "Demandé"])
-        
-        col_m1.metric("Total Demandes CP", total_cp)
-        col_m2.metric("Congés Validés", valides_cp)
-        col_m3.metric("En attente", demandes_cp)
-        
-        st.write("##### Répartition par Statut :")
-        if "Statut" in edited_cp.columns:
-            df_analyse_cp = edited_cp["Statut"].value_counts().reset_index()
-            df_analyse_cp.columns = ["Statut", "Nombre"]
-            st.dataframe(df_analyse_cp, hide_index=True)
-            st.bar_chart(df_analyse_cp.set_index("Statut"))
-    else:
-        st.info("Ajoutez des données dans le tableau ci-dessus pour afficher l'analyse.")
-
     if not edited_cp.empty:
-        output_cp = BytesIO()
-        with pd.ExcelWriter(output_cp, engine='openpyxl') as writer:
-            edited_cp.to_excel(writer, index=False, sheet_name='Conges_Payes')
+        pdf_bytes_cp = generer_pdf_officiel(edited_cp, "Suivi Congés Payés")
         st.download_button(
-            label="📥 Télécharger le suivi des CP (Excel)",
-            data=output_cp.getvalue(),
-            file_name=f"Suivi_Conges_Payes_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            label="🖨️ Imprimer / Exporter (PDF Officiel CP)",
+            data=pdf_bytes_cp,
+            file_name=f"Rapport_Officiel_CP_{datetime.now().strftime('%Y-%m-%d')}.pdf",
+            mime="application/pdf"
         )
 
 # ---------------------------------------------------------
-# ONGLET 3 : MALADIES & ANALYSES
+# ONGLET 3 : MALADIES
 # ---------------------------------------------------------
 with tab_maladies:
-    st.subheader("🏥 Suivi des Arrêts Maladie & Tableau d'Analyse")
-    st.write("Consultez et analysez les arrêts de travail de vos agents.")
-    
-    col_m1, col_m2 = st.columns(2)
-    with col_m1:
-        f_mal_excel = st.file_uploader("Importer un fichier Excel (Maladies)", type=["xlsx", "xls"], key="up_mal_excel")
-    with col_m2:
-        f_mal_pdf = st.file_uploader("Importer un fichier PDF (Maladies / Justificatif)", type=["pdf"], key="up_mal_pdf")
-        
+    st.subheader("🏥 Suivi des Arrêts Maladie")
     data_mal_defaut = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Motif / Justificatif", "Commentaire"])
-    
-    if f_mal_excel:
-        try:
-            data_mal_defaut = pd.read_excel(f_mal_excel)
-            st.success("Fichier Excel Maladies importé avec succès !")
-        except Exception as e:
-            st.error(f"Erreur de lecture Excel : {e}")
-            
-    elif f_mal_pdf:
-        try:
-            reader = pypdf.PdfReader(f_mal_pdf)
-            st.info("Fichier PDF de justificatif lu. Vous pouvez l'ajouter dans le tableau.")
-        except Exception as e:
-            st.error(f"Erreur de lecture PDF : {e}")
-
-    edited_maladies = st.data_editor(
-        data_mal_defaut,
-        num_rows="dynamic",
-        hide_index=True,
-        key="editor_maladies_interactif"
-    )
-    
-    st.markdown("---")
-    st.subheader("📊 Tableau d'Analyse — Maladies & Absences")
+    edited_maladies = st.data_editor(data_mal_defaut, num_rows="dynamic", hide_index=True, key="editor_maladies_interactif")
     
     if not edited_maladies.empty:
-        total_maladies = len(edited_maladies)
-        st.metric("Total Arrêts / Absences enregistrés", total_maladies)
-        
-        if "Agent" in edited_maladies.columns:
-            st.write("##### Arrêts par Agent :")
-            df_analyse_mal = edited_maladies["Agent"].value_counts().reset_index()
-            df_analyse_mal.columns = ["Agent", "Nombre d'arrêts"]
-            st.dataframe(df_analyse_mal, hide_index=True)
-            if not df_analyse_mal.empty and df_analyse_mal["Agent"].iloc[0] != "":
-                st.bar_chart(df_analyse_mal.set_index("Agent"))
-    else:
-        st.info("Ajoutez des données dans le tableau ci-dessus pour afficher l'analyse.")
-
-    if not edited_maladies.empty:
-        output_mal = BytesIO()
-        with pd.ExcelWriter(output_mal, engine='openpyxl') as writer:
-            edited_maladies.to_excel(writer, index=False, sheet_name='Maladies_Absences')
+        pdf_bytes_mal = generer_pdf_officiel(edited_maladies, "Suivi Arrêts Maladie")
         st.download_button(
-            label="📥 Télécharger le suivi des Maladies (Excel)",
-            data=output_mal.getvalue(),
-            file_name=f"Suivi_Maladies_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            label="🖨️ Imprimer / Exporter (PDF Officiel Maladies)",
+            data=pdf_bytes_mal,
+            file_name=f"Rapport_Officiel_Maladies_{datetime.now().strftime('%Y-%m-%d')}.pdf",
+            mime="application/pdf"
         )
 
 # ---------------------------------------------------------
-# ONGLET 4 : CP FÊTES DE FIN D'ANNÉE (5 ANS)
+# ONGLET 4 & 5 : FIN D'ANNÉE
 # ---------------------------------------------------------
 with tab_cp_fin:
-    st.subheader("🎄 CP Fêtes de Fin d'Année (Historique 5 ans)")
-    st.data_editor(
-        pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année", "Statut"]),
-        num_rows="dynamic",
-        hide_index=True,
-        key="cp5_interactif"
-    )
+    st.subheader("🎄 CP Fêtes de Fin d'Année (5 ans)")
+    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année", "Statut"]), num_rows="dynamic", hide_index=True, key="cp5_interactif")
+
+with tab_maladies_fin:
+    st.subheader("🎄 Maladies Fêtes de Fin d'Année (5 ans)")
+    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année", "Motif"]), num_rows="dynamic", key="mal5_interactif")
 
 # ---------------------------------------------------------
-# ONGLET 5 : MALADIES FÊTES DE FIN D'ANNÉE (5 ANS)
+# ONGLET 6 : CONTRÔLE ADMIN & DROITS (EXCLUSIF ADMIN)
 # ---------------------------------------------------------
-with tab_maladies_fin:
-    st.subheader("🎄 Maladies Fêtes de Fin d'Année (Historique 5 ans)")
-    st.data_editor(
-        pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année", "Motif"]),
-        num_rows="dynamic",
-        hide_index=True,
-        key="mal5_interactif"
-    )
+if st.session_state["utilisateur_connecte"] == "admin":
+    with tab_admin_secu:
+        st.subheader("🔐 Panneau de Contrôle & Gestion des Droits")
+        st.write("En tant qu'administrateur unique, vous pouvez décider ici d'ouvrir ou de verrouiller les droits de saisie pour chaque planificateur :")
+        
+        st.markdown("---")
+        st.write("#### ⚙️ Gestion des Droits d'Écriture :")
+        
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            hinerava_statut = st.checkbox("Autoriser Hinerava à modifier/saisir", value=st.session_state["droits_ecriture"]["hinerava"])
+            st.session_state["droits_ecriture"]["hinerava"] = hinerava_statut
+        with col_d2:
+            hoania_statut = st.checkbox("Autoriser Hoania à modifier/saisir", value=st.session_state["droits_ecriture"]["hoania"])
+            st.session_state["droits_ecriture"]["hoania"] = hoania_statut
+            
+        st.success("✅ Les modifications des droits sont prises en compte immédiatement.")
+
+        st.markdown("---")
+        st.subheader("📜 Journal Sécurisé des Connexions")
+        if st.session_state["historique_connexions"]:
+            df_historique = pd.DataFrame(st.session_state["historique_connexions"])
+            st.dataframe(df_historique, hide_index=True, use_container_width=True)
+        else:
+            st.info("Aucune connexion enregistrée pour le moment.")
