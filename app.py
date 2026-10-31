@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import pypdf
 import re
+import os
 from datetime import datetime, timedelta
 from io import BytesIO
 from reportlab.lib.pagesizes import letter, landscape
@@ -15,6 +16,10 @@ st.set_page_config(
     page_icon="🔒",
     layout="wide"
 )
+
+# Dossier sécurisé pour stocker les fichiers administratifs partagés
+DOSSIER_STOCKAGE = "fichiers_admin_stock"
+os.makedirs(DOSSIER_STOCKAGE, exist_ok=True)
 
 # ---------------------------------------------------------
 # SÉCURITÉ : GESTION DES UTILISATEURS & DROITS
@@ -34,10 +39,9 @@ if "role_utilisateur" not in st.session_state:
 if "historique_connexions" not in st.session_state:
     st.session_state["historique_connexions"] = []
 
-# Gestion des droits d'écriture par l'admin (Verrouillage global ou par utilisateur)
 if "droits_ecriture" not in st.session_state:
     st.session_state["droits_ecriture"] = {
-        "hinerava": True, # True = Autorisé à modifier/valider, False = Lecture seule
+        "hinerava": True,
         "hoania": True
     }
 
@@ -84,7 +88,7 @@ with col_deco:
 
 st.markdown("---")
 
-# Fonction utilitaire pour générer un PDF officiel non modifiable
+# Fonction PDF officiel
 def generer_pdf_officiel(dataframe_a_imprimer, titre_rapport):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
@@ -101,11 +105,10 @@ def generer_pdf_officiel(dataframe_a_imprimer, titre_rapport):
     )
     
     elements.append(Paragraph(f"RAPPORT OFFICIEL — {titre_rapport.upper()}", title_style))
-    elements.append(Paragraph(f"Généré le : {datetime.now().strftime('%d/%m/%Y à %H:%M')} par {st.session_state['utilisateur_connecte'].capitalize()} (Document juridiquement validé)", styles['Normal']))
+    elements.append(Paragraph(f"Généré le : {datetime.now().strftime('%d/%m/%Y à %H:%M')} par {st.session_state['utilisateur_connecte'].capitalize()} (Document validé)", styles['Normal']))
     elements.append(Spacer(1, 15))
     
     if not dataframe_a_imprimer.empty:
-        # Transformation du DataFrame en liste de listes pour ReportLab
         data = [list(dataframe_a_imprimer.columns)]
         for _, row in dataframe_a_imprimer.iterrows():
             data.append([str(val) if pd.notna(val) else "" for val in row])
@@ -131,7 +134,7 @@ def generer_pdf_officiel(dataframe_a_imprimer, titre_rapport):
     buffer.seek(0)
     return buffer.getvalue()
 
-# Création des onglets selon les rôles
+# Onglets dynamiques
 if st.session_state["utilisateur_connecte"] == "admin":
     tab_dispo, tab_cp, tab_maladies, tab_cp_fin, tab_maladies_fin, tab_admin_secu = st.tabs([
         "📋 Disponibilités & Remplacements", 
@@ -139,7 +142,7 @@ if st.session_state["utilisateur_connecte"] == "admin":
         "🏥 Maladies & Analyses",
         "🎄 CP Fêtes de Fin d'Année (5 ans)",
         "🎄 Maladies Fêtes de Fin d'Année (5 ans)",
-        "🔐 Contrôle Admin & Droits"
+        "🔐 Contrôle Admin & Documents"
     ])
 else:
     tab_dispo, tab_cp, tab_maladies, tab_cp_fin, tab_maladies_fin = st.tabs([
@@ -150,33 +153,63 @@ else:
         "🎄 Maladies Fêtes de Fin d'Année (5 ans)"
     ])
 
-# Vérification des droits d'écriture pour l'utilisateur actuel
 user_actuel = st.session_state["utilisateur_connecte"]
+mode_edition_active = True if user_actuel == "admin" else st.session_state["droits_ecriture"].get(user_actuel, True)
+
+# ---------------------------------------------------------
+# GESTION CENTRALISÉE DES FICHIERS STOCKÉS
+# ---------------------------------------------------------
+st.sidebar.header("📁 Référentiel & Plannings")
 if user_actuel == "admin":
-    mode_edition_active = True # L'admin a toujours tous les droits
+    st.sidebar.info("👤 Espace Admin : Vous seul pouvez ajouter ou supprimer les documents officiels.")
+    
+    admin_excel = st.sidebar.file_uploader("1. Fichier Référentiel (.xlsx)", type=["xlsx", "xls"], key="adm_excel")
+    if admin_excel:
+        chemin_excel = os.path.join(DOSSIER_STOCKAGE, "referentiel_agents.xlsx")
+        with open(chemin_excel, "wb") as f:
+            f.write(admin_excel.getbuffer())
+        st.sidebar.success("✅ Référentiel mis à jour !")
+
+    admin_pdfs = st.sidebar.file_uploader("2. Plannings PDF Comète", type=["pdf"], accept_multiple_files=True, key="adm_pdf")
+    if admin_pdfs:
+        for p in admin_pdfs:
+            chemin_pdf = os.path.join(DOSSIER_STOCKAGE, p.name)
+            with open(chemin_pdf, "wb") as f:
+                f.write(p.getbuffer())
+        st.sidebar.success("✅ Planning(s) PDF ajouté(s) !")
+
+    # Option de suppression de fichiers
+    fichiers_stockes = os.listdir(DOSSIER_STOCKAGE)
+    if fichiers_stockes:
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🗑️ Supprimer un document")
+        fichier_a_supprimer = st.sidebar.selectbox("Choisir le fichier à retirer", ["--- Choisir ---"] + fichiers_stockes)
+        if fichier_a_supprimer != "--- Choisir ---":
+            if st.sidebar.button("Supprimer ce fichier"):
+                try:
+                    os.remove(os.path.join(DOSSIER_STOCKAGE, fichier_a_supprimer))
+                    st.sidebar.success(f"Fichier {fichier_a_supprimer} supprimé.")
+                    st.rerun()
+                except Exception as e:
+                    st.sidebar.error(f"Erreur : {e}")
 else:
-    mode_edition_active = st.session_state["droits_ecriture"].get(user_actuel, True)
+    st.sidebar.success("🔒 Plannings officiels verrouillés. Consultation active de la semaine en cours.")
+
+semaine_selectionnee = st.sidebar.selectbox("3. Semaine à afficher en priorité", ["S43", "S44", "Les deux"], key="semaine_dispo")
 
 # ---------------------------------------------------------
 # ONGLET 1 : DISPONIBILITÉS
 # ---------------------------------------------------------
 with tab_dispo:
-    st.sidebar.header("📁 Données de la Semaine (Dispo)")
-    uploaded_excel = st.sidebar.file_uploader(
-        "1. Fichier Référentiel Agents (.xlsx)", 
-        type=["xlsx", "xls"],
-        key="excel_dispo"
-    )
-    fichiers_planning = st.sidebar.file_uploader(
-        "2. Plannings PDF Comète (Multi-contrats)", 
-        type=["pdf"], 
-        accept_multiple_files=True,
-        key="pdf_dispo"
-    )
+    # Charger automatiquement depuis le dossier stocké partagé
+    chemin_ref_local = os.path.join(DOSSIER_STOCKAGE, "referentiel_agents.xlsx")
+    if not os.path.exists(chemin_ref_local):
+        st.warning("⚠️ Aucun fichier Référentiel (.xlsx) n'a encore été inséré par l'administrateur.")
+        st.stop()
 
-    def charger_referentiel(excel_file):
+    def charger_referentiel(chemin_fichier):
         try:
-            df_raw = pd.read_excel(excel_file, header=None)
+            df_raw = pd.read_excel(chemin_fichier, header=None)
             df_raw[0] = df_raw[0].ffill()
             
             donnees_traitees = []
@@ -199,16 +232,10 @@ with tab_dispo:
         except Exception as e:
             return None, f"Erreur Excel : {e}"
 
-    if not uploaded_excel:
-        st.warning("⚠️ Veuillez importer le fichier **referentiel_agents.xlsx** dans le menu de gauche pour démarrer.")
-        st.stop()
-
-    df_agents, erreur = charger_referentiel(uploaded_excel)
+    df_agents, erreur = charger_referentiel(chemin_ref_local)
     if erreur:
         st.error(f"⚠️ {erreur}")
         st.stop()
-
-    semaine_selectionnee = st.sidebar.selectbox("3. Semaine à afficher en priorité", ["S43", "S44", "Les deux"], key="semaine_dispo")
 
     def decimal_to_hm(heures_dec):
         h = int(heures_dec)
@@ -229,9 +256,13 @@ with tab_dispo:
         matches = sum(1 for mot in mots_excel if mot in p_upper)
         return matches >= 1
 
-    if fichiers_planning:
-        for fichier in fichiers_planning:
-            match_semaine = re.search(r'S([0-9]{1,2})', fichier.name.upper())
+    # Récupérer tous les PDF du dossier stocké
+    fichiers_pdf_stockes = [os.path.join(DOSSIER_STOCKAGE, f) for f in os.listdir(DOSSIER_STOCKAGE) if f.endswith(".pdf")]
+
+    if fichiers_pdf_stockes:
+        for chemin_pdf in fichiers_pdf_stockes:
+            nom_fichier = os.path.basename(chemin_pdf)
+            match_semaine = re.search(r'S([0-9]{1,2})', nom_fichier.upper())
             
             semaines_a_traiter = []
             if match_semaine:
@@ -243,7 +274,7 @@ with tab_dispo:
                     semaines_a_traiter = [43, 44]
 
             try:
-                reader = pypdf.PdfReader(fichier)
+                reader = pypdf.PdfReader(chemin_pdf)
                 lignes_texte = []
                 for page in reader.pages:
                     t = page.extract_text(extraction_mode="layout") or page.extract_text()
@@ -254,13 +285,9 @@ with tab_dispo:
                                 lignes_texte.append(l_clean)
                 
                 texte_global = "\n".join(lignes_texte)
+                agents_trouves_dans_pdf = [ex for ex in df_agents["Agent"].unique() if noms_sont_compatibles(ex, texte_global)]
                 
-                agents_trouves_dans_pdf = []
-                for ex_agent in df_agents["Agent"].unique():
-                    if noms_sont_compatibles(ex_agent, texte_global):
-                        agents_trouves_dans_pdf.append(ex_agent)
-                
-                logs_debug.append(f"📁 Fichier `{fichier.name}` : {len(agents_trouves_dans_pdf)} agent(s) détecté(s).")
+                logs_debug.append(f"📁 Fichier `{nom_fichier}` : {len(agents_trouves_dans_pdf)} agent(s) détecté(s).")
 
                 for num_semaine in semaines_a_traiter:
                     if semaine_selectionnee != "Les deux" and f"S{num_semaine}" != semaine_selectionnee:
@@ -280,7 +307,6 @@ with tab_dispo:
                     for line in lignes_texte:
                         if "TOTAL" in line.upper() or len(line) < 4:
                             continue
-                        
                         hours = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', line)
                         if len(hours) >= 2:
                             h1, h2 = hours[0], hours[1]
@@ -288,17 +314,14 @@ with tab_dispo:
                                 t1 = datetime.strptime(h1, '%H:%M')
                                 t2 = datetime.strptime(h2, '%H:%M')
                                 diff = (t2 - t1).total_seconds()
-                                if diff <= 0:
-                                    diff += 24 * 3600
+                                if diff <= 0: diff += 24 * 3600
                                 duree = diff / 3600.0
-                                
                                 if 1.0 <= duree <= 14.0:
                                     services_tries.append((t1, h1, h2, duree))
                             except Exception:
                                 pass
 
                     services_tries.sort(key=lambda x: x[0])
-
                     services_uniques = []
                     seen_intervalles = set()
                     for s in services_tries:
@@ -317,22 +340,19 @@ with tab_dispo:
                                 h1, h2 = services_uniques[service_idx]
                                 dt_deb = datetime.strptime(f"{j_target} {h1}", '%d/%m/%Y %H:%M')
                                 dt_fin = datetime.strptime(f"{j_target} {h2}", '%d/%m/%Y %H:%M')
-                                if dt_fin <= dt_deb:
-                                    dt_fin += timedelta(days=1)
-                                
+                                if dt_fin <= dt_deb: dt_fin += timedelta(days=1)
                                 semaine_agent[j_target] = {"statut": "TRAVAIL", "intervalles": [(dt_deb, dt_fin)]}
                                 service_idx += 1
                             else:
                                 semaine_agent[j_target] = {"statut": "REPOS", "intervalles": []}
 
                     for agent_name in agents_trouves_dans_pdf:
-                        cle_dict = f"{agent_name}_S{num_semaine}"
-                        planning_agents[cle_dict] = semaine_agent
+                        planning_agents[f"{agent_name}_S{num_semaine}"] = semaine_agent
 
             except Exception as e:
-                logs_debug.append(f"⚠️ Erreur de lecture sur {fichier.name} : {e}")
+                logs_debug.append(f"⚠️ Erreur sur {nom_fichier} : {e}")
 
-    with st.expander("🔍 Journal de diagnostic des PDF", expanded=True):
+    with st.expander("🔍 Journal de diagnostic des PDF", expanded=False):
         for log in logs_debug:
             st.write(log)
 
@@ -361,37 +381,28 @@ with tab_dispo:
         if not matched_schedule:
             matched_schedule = {j: {"statut": "REPOS", "intervalles": []} for j in jours_defaut}
 
-        dates_triees = sorted(
-            matched_schedule.keys(), 
-            key=lambda x: datetime.strptime(x, '%d/%m/%Y')
-        )
+        dates_triees = sorted(matched_schedule.keys(), key=lambda x: datetime.strptime(x, '%d/%m/%Y'))
         jours_repos_total = sum(1 for d in dates_triees if matched_schedule[d]["statut"] == "REPOS")
 
-        for idx_d, d in enumerate(dates_triees):
+        for d in dates_triees:
             info_jour = matched_schedule[d]
             statut = info_jour["statut"]
             dt_jour = datetime.strptime(d, '%d/%m/%Y')
             
             if statut == "REPOS":
                 creneau_texte = "Journée complète (00h00 - 24h00)"
-                if jours_repos_total == 1:
-                    creneau_texte += " — seul jour de repos hebdo"
+                if jours_repos_total == 1: creneau_texte += " — seul jour de repos hebdo"
                 opportunite = "🟢 Jour de Repos"
             else:
                 intervalles = info_jour["intervalles"]
                 heures_faites = sum([(iv[1] - iv[0]).total_seconds() for iv in intervalles]) / 3600.0
-                
                 if heures_faites >= 10.0:
-                    h_faites_fmt = decimal_to_hm(heures_faites)
-                    creneau_texte = f"Déjà {h_faites_fmt} faites ce jour (Plafond 10h atteint)"
+                    creneau_texte = f"Déjà {decimal_to_hm(heures_faites)} faites ce jour (Plafond 10h atteint)"
                     opportunite = "🔴 Complet (10h atteint)"
                 else:
                     derniere_fin = max([iv[1] for iv in intervalles]) if intervalles else datetime.combine(dt_jour.date(), datetime.min.time())
-                    heure_debut_str = derniere_fin.strftime('%H:%M')
                     heures_restantes = max(0.0, 10.0 - heures_faites)
-                    
-                    duree_fmt = decimal_to_hm(heures_restantes)
-                    creneau_texte = f"{duree_fmt} max ce jour (entre {heure_debut_str} à 00:00)"
+                    creneau_texte = f"{decimal_to_hm(heures_restantes)} max ce jour (entre {derniere_fin.strftime('%H:%M')} à 00:00)"
                     opportunite = "possibilité de faire travailler l’agent"
             
             tableau_resultats.append({
@@ -405,17 +416,12 @@ with tab_dispo:
 
     if tableau_resultats:
         df_table = pd.DataFrame(tableau_resultats)
-
         edited_df = st.data_editor(
             df_table,
             column_config={
-                "Dernier recours": st.column_config.TextColumn(
-                    "Dernier recours (Saisie quotidienne)",
-                    help="Saisir manuellement des notes ou commentaires",
-                    max_chars=150
-                )
+                "Dernier recours": st.column_config.TextColumn("Dernier recours (Saisie quotidienne)", max_chars=150)
             },
-            disabled=["Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"] if not mode_edition_active else ["Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
+            disabled=["Contrat", "Agent", "Date", "Type d'opportunité", "Créneau horaire / Heures possibles"],
             hide_index=True,
             key="editor_dispo"
         )
@@ -423,98 +429,67 @@ with tab_dispo:
         st.markdown("---")
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.success("✅ Données prêtes pour export.")
+            st.success("✅ Données synchronisées.")
         with col2:
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                edited_df.to_excel(writer, index=False, sheet_name='Disponibilites_Remplacements')
-            st.download_button(
-                label="📥 Télécharger (Excel)",
-                data=output.getvalue(),
-                file_name=f"Rapport_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+                edited_df.to_excel(writer, index=False, sheet_name='Disponibilites')
+            st.download_button("📥 Télécharger (Excel)", output.getvalue(), file_name=f"Rapport_{datetime.now().strftime('%Y-%m-%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         with col3:
             pdf_bytes = generer_pdf_officiel(edited_df, "Disponibilités et Remplacements")
-            st.download_button(
-                label="🖨️ Imprimer / Exporter (PDF Officiel)",
-                data=pdf_bytes,
-                file_name=f"Rapport_Officiel_Disponibilites_{datetime.now().strftime('%Y-%m-%d_%H%M')}.pdf",
-                mime="application/pdf"
-            )
-    else:
-        st.warning("⚠️ Aucun résultat dans le tableau.")
+            st.download_button("🖨️ Imprimer (PDF Officiel)", pdf_bytes, file_name=f"Rapport_Officiel_{datetime.now().strftime('%Y-%m-%d')}.pdf", mime="application/pdf")
 
 # ---------------------------------------------------------
-# ONGLET 2 : CONGÉS PAYÉS
+# AUTRES ONGLETS (CP, Maladies, Fin d'année)
 # ---------------------------------------------------------
 with tab_cp:
     st.subheader("🏖️ Suivi des Congés Payés (CP)")
-    data_cp_defaut = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Type de Congé", "Statut"])
-    edited_cp = st.data_editor(data_cp_defaut, num_rows="dynamic", hide_index=True, key="editor_cp_interactif")
-    
+    edited_cp = st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Type de Congé", "Statut"]), num_rows="dynamic", hide_index=True, key="cp_s")
     if not edited_cp.empty:
-        pdf_bytes_cp = generer_pdf_officiel(edited_cp, "Suivi Congés Payés")
-        st.download_button(
-            label="🖨️ Imprimer / Exporter (PDF Officiel CP)",
-            data=pdf_bytes_cp,
-            file_name=f"Rapport_Officiel_CP_{datetime.now().strftime('%Y-%m-%d')}.pdf",
-            mime="application/pdf"
-        )
+        st.download_button("🖨️ Imprimer PDF CP", generer_pdf_officiel(edited_cp, "Congés Payés"), file_name="CP.pdf", mime="application/pdf")
 
-# ---------------------------------------------------------
-# ONGLET 3 : MALADIES
-# ---------------------------------------------------------
 with tab_maladies:
     st.subheader("🏥 Suivi des Arrêts Maladie")
-    data_mal_defaut = pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Motif / Justificatif", "Commentaire"])
-    edited_maladies = st.data_editor(data_mal_defaut, num_rows="dynamic", hide_index=True, key="editor_maladies_interactif")
-    
-    if not edited_maladies.empty:
-        pdf_bytes_mal = generer_pdf_officiel(edited_maladies, "Suivi Arrêts Maladie")
-        st.download_button(
-            label="🖨️ Imprimer / Exporter (PDF Officiel Maladies)",
-            data=pdf_bytes_mal,
-            file_name=f"Rapport_Officiel_Maladies_{datetime.now().strftime('%Y-%m-%d')}.pdf",
-            mime="application/pdf"
-        )
+    edited_mal = st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Motif", "Commentaire"]), num_rows="dynamic", hide_index=True, key="mal_s")
+    if not edited_mal.empty:
+        st.download_button("🖨️ Imprimer PDF Maladies", generer_pdf_officiel(edited_mal, "Maladies"), file_name="Maladies.pdf", mime="application/pdf")
 
-# ---------------------------------------------------------
-# ONGLET 4 & 5 : FIN D'ANNÉE
-# ---------------------------------------------------------
 with tab_cp_fin:
     st.subheader("🎄 CP Fêtes de Fin d'Année (5 ans)")
-    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année", "Statut"]), num_rows="dynamic", hide_index=True, key="cp5_interactif")
+    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année", "Statut"]), num_rows="dynamic", hide_index=True, key="cp5_s")
 
 with tab_maladies_fin:
     st.subheader("🎄 Maladies Fêtes de Fin d'Année (5 ans)")
-    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année", "Motif"]), num_rows="dynamic", key="mal5_interactif")
+    st.data_editor(pd.DataFrame(columns=["Agent", "Date Début", "Date Fin", "Année", "Motif"]), num_rows="dynamic", key="mal5_s")
 
 # ---------------------------------------------------------
-# ONGLET 6 : CONTRÔLE ADMIN & DROITS (EXCLUSIF ADMIN)
+# ONGLET ADMIN : CONTRÔLE & DOCUMENTS
 # ---------------------------------------------------------
-if st.session_state["utilisateur_connecte"] == "admin":
+if user_actuel == "admin":
     with tab_admin_secu:
-        st.subheader("🔐 Panneau de Contrôle & Gestion des Droits")
-        st.write("En tant qu'administrateur unique, vous pouvez décider ici d'ouvrir ou de verrouiller les droits de saisie pour chaque planificateur :")
+        st.subheader("🔐 Panneau de Contrôle & Gestion des Documents")
+        st.write("En tant qu'administrateur unique, vous gérez les fichiers permanents et les droits des planificateurs :")
         
         st.markdown("---")
-        st.write("#### ⚙️ Gestion des Droits d'Écriture :")
-        
+        st.subheader("📂 Documents actuellement en mémoire sur le serveur :")
+        fichiers_actuels = os.listdir(DOSSIER_STOCKAGE)
+        if fichiers_actuels:
+            for f in fichiers_actuels:
+                st.write(f"- 📄 `{f}`")
+        else:
+            st.info("Aucun document stocké pour le moment.")
+
+        st.markdown("---")
+        st.subheader("⚙️ Droits d'écriture des Planificateurs :")
         col_d1, col_d2 = st.columns(2)
         with col_d1:
-            hinerava_statut = st.checkbox("Autoriser Hinerava à modifier/saisir", value=st.session_state["droits_ecriture"]["hinerava"])
-            st.session_state["droits_ecriture"]["hinerava"] = hinerava_statut
+            st.session_state["droits_ecriture"]["hinerava"] = st.checkbox("Autoriser Hinerava à modifier", value=st.session_state["droits_ecriture"]["hinerava"])
         with col_d2:
-            hoania_statut = st.checkbox("Autoriser Hoania à modifier/saisir", value=st.session_state["droits_ecriture"]["hoania"])
-            st.session_state["droits_ecriture"]["hoania"] = hoania_statut
-            
-        st.success("✅ Les modifications des droits sont prises en compte immédiatement.")
+            st.session_state["droits_ecriture"]["hoania"] = st.checkbox("Autoriser Hoania à modifier", value=st.session_state["droits_ecriture"]["hoania"])
 
         st.markdown("---")
-        st.subheader("📜 Journal Sécurisé des Connexions")
+        st.subheader("📜 Journal des Connexions")
         if st.session_state["historique_connexions"]:
-            df_historique = pd.DataFrame(st.session_state["historique_connexions"])
-            st.dataframe(df_historique, hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(st.session_state["historique_connexions"]), hide_index=True, use_container_width=True)
         else:
-            st.info("Aucune connexion enregistrée pour le moment.")
+            st.info("Aucune connexion enregistrée.")
